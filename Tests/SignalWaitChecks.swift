@@ -1,0 +1,49 @@
+import Foundation
+
+@main struct SignalWaitChecks {
+    static func main() {
+        let origin = Date(timeIntervalSince1970: 1_000_000)
+        func timing(_ start: Double, _ end: Double, until: Double = 10_000) -> PedestrianTiming {
+            .init(anchor: origin, cycle: 60, walkWindows: [.init(start: start, end: end)],
+                  validFrom: origin.addingTimeInterval(-100), validUntil: origin.addingTimeInterval(until))
+        }
+        let signal = timing(10, 20)
+        precondition(signal.wait(at: origin) == 10)
+        precondition(signal.wait(at: origin.addingTimeInterval(10)) == 0)
+        precondition(signal.wait(at: origin.addingTimeInterval(19.9)) == 0)
+        precondition(signal.wait(at: origin.addingTimeInterval(20)) == 50)
+        precondition(signal.wait(at: origin.addingTimeInterval(-1)) == 11)
+        precondition(timing(10,20,until:10).wait(at:origin) == nil) // next plan boundary
+        precondition(signal.wait(at:origin.addingTimeInterval(-101)) == nil)
+        let invalid = PedestrianTiming(anchor:origin,cycle:60,walkWindows:[.init(start:10,end:30),.init(start:20,end:40)],validFrom:origin,validUntil:origin.addingTimeInterval(100))
+        precondition(invalid.wait(at:origin) == nil)
+        let wrapped = PedestrianTiming(anchor:origin,cycle:60,walkWindows:[.init(start:0,end:5),.init(start:50,end:60)],validFrom:origin,validUntil:origin.addingTimeInterval(1000))
+        precondition(wrapped.wait(at:origin.addingTimeInterval(59)) == 0)
+        precondition(wrapped.wait(at:origin.addingTimeInterval(5)) == 45)
+        func crossing(_ id:String, _ meters:Double, _ t:PedestrianTiming?) -> SignalWaitEstimator.Crossing {
+            .init(id:id,metersFromStart:meters,timing:t,unavailableReason:nil)
+        }
+        // At 300sec/km: A at 30 sec -> 20 sec wait; B ETA becomes 80, not 60 -> 50 sec wait.
+        let result = SignalWaitEstimator.evaluate(distance:1000,pace:300,departure:origin,
+            crossings:[crossing("B",200,timing(10,20)),crossing("A",100,timing(50,60))],coverageVerified:true)
+        precondition(result.stops.map(\.id) == ["A","B"])
+        precondition(result.stops[0].wait == 20 && result.stops[1].wait == 50)
+        precondition(result.stops[1].arrival == origin.addingTimeInterval(80))
+        precondition(result.totalWait == 70 && result.finish == origin.addingTimeInterval(370))
+        let unknown = SignalWaitEstimator.evaluate(distance:1000,pace:300,departure:origin,
+            crossings:[crossing("A",100,nil),crossing("B",200,signal)],coverageVerified:true)
+        precondition(unknown.totalWait == nil && unknown.finish == nil && unknown.stops[1].arrival == nil)
+        let emptyUnknown = SignalWaitEstimator.evaluate(distance:1000,pace:300,departure:origin,crossings:[],coverageVerified:false)
+        precondition(emptyUnknown.totalWait == nil) // zero candidates is not zero signals
+        let emptyKnown = SignalWaitEstimator.evaluate(distance:1000,pace:300,departure:origin,crossings:[],coverageVerified:true)
+        precondition(emptyKnown.totalWait == 0)
+        let badDistance = SignalWaitEstimator.evaluate(distance:100,pace:300,departure:origin,crossings:[crossing("A",101,signal)],coverageVerified:true)
+        precondition(badDistance.totalWait == nil)
+        let duplicate = SignalWaitEstimator.evaluate(distance:1000,pace:300,departure:origin,crossings:[crossing("A",100,signal),crossing("A",200,signal)],coverageVerified:true)
+        precondition(duplicate.totalWait == nil)
+        precondition(SignalWaitEstimator.bestIndex(estimates:[result,unknown],distances:[1000,1000],target:1000) == nil)
+        precondition(SignalWaitEstimator.bestIndex(estimates:[result,emptyKnown],distances:[1000,1010],target:1000) == 1)
+        precondition(SignalWaitEstimator.bestIndex(estimates:[emptyKnown,emptyKnown],distances:[1100,1001],target:1000) == 1)
+        print("Wait boundaries, wraparound, cumulative ETA, unknown propagation and ranking passed")
+    }
+}

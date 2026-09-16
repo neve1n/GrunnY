@@ -125,7 +125,7 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
         }
         currentLocation = latest
         isLocating = false
-        message = "현재 위치를 확인했습니다. 코스 지원 지역은 대구입니다."
+        message = "현재 위치를 확인했습니다."
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -147,7 +147,7 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
     private func showPermissionStatus() {
         isLocating = false
         message = isRestricted
-            ? "기기에서 위치 사용이 제한되어 있습니다. 대구 지도를 둘러볼 수 있습니다."
+            ? "기기에서 위치 사용이 제한되어 있습니다. 지도를 둘러볼 수 있습니다."
             : "위치 권한이 꺼져 있습니다. 설정에서 허용하면 현재 위치를 표시합니다."
     }
 }
