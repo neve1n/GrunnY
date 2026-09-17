@@ -1,367 +1,205 @@
-//
-//  ContentView.swift
-//  GrunnY
-//
-//  Created by 최서진 on 9/16/26.
-//
-
 import SwiftUI
 import MapKit
-import CoreLocation
 
 struct ContentView: View {
-    @Environment(\.openURL) private var openURL
     @State private var location = LocationManager()
-    @State private var routePlanner = RoutePlanner()
-    @State private var isChoosingDestination = false
-    @State private var mapCenter = CLLocationCoordinate2D(latitude: 37.5665, longitude: 126.9780)
-    @AppStorage("targetDistanceKM") private var targetDistanceKM = 5.0
-    @AppStorage("paceSecondsPerKM") private var paceSecondsPerKM = 330
-    // 예약 시각은 앱을 다시 켤 때 과거 시각으로 남지 않도록 메모리에만 보관한다.
-    @State private var departureTime: Date?
-    @State private var showsRunSettings = false
-    @State private var showsCrosswalks = false
-    @State private var showsSignalComparison = false
+    @State private var planner = RoutePlanner()
+    @AppStorage("targetDistanceKM") private var targetKM = 5.0
+    @AppStorage("paceSecondsPerKM") private var pace = 330
+    @State private var departure: Date?
+    @State private var clockTime = Date().addingTimeInterval(300)
+    @State private var departsNow = true
     @State private var signalRows: [SeoulSignalRow] = []
-    @State private var signalPlans: SeoulPlanCollection?
-    @State private var draftDistance = 5.0
-    @State private var draftPace = 330
-    @State private var draftDepartsNow = true
-    @State private var draftDeparture = Date()
-    // 위치를 얻기 전에는 서울 지도를 표시한다.
-    @State private var camera: MapCameraPosition = .region(MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 37.5665, longitude: 126.9780),
-        span: MKCoordinateSpan(latitudeDelta: 0.04, longitudeDelta: 0.04)
-    ))
+    @State private var plans: SeoulPlanCollection?
+    @State private var showsTools = false
+    @State private var showsRoute = false
+    @State private var showsSession = false
+    @State private var showsAnalysis = false
+    @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
-        MapReader { proxy in
-        Map(position: $camera) {
-            ForEach(Array(routePlanner.displayedLegs.enumerated()), id: \.offset) { _, leg in
-                MapPolyline(leg.polyline)
-                    .stroke(.orange, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round, dash: [8, 5]))
-            }
-            if let destination = routePlanner.destination {
-                Marker(routePlanner.targetMeters == nil ? "목적지" : "출발·도착", systemImage: "mappin", coordinate: destination)
-                    .tint(.orange)
-            }
-            if location.runLocations.count >= 2 {
-                MapPolyline(coordinates: location.runLocations.map(\.coordinate))
-                    .stroke(.blue, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
-            }
-            if let start = location.runLocations.first {
-                Marker("출발", systemImage: "flag.fill", coordinate: start.coordinate)
-                    .tint(.green)
-            }
-            UserAnnotation()
-            ForEach(Array(routePlanner.crosswalkMatches.prefix(80).enumerated()), id: \.element.id) { index, match in
-                Annotation("횡단보도 후보 \(index + 1)", coordinate: match.crosswalk.coordinate) {
-                    Text("\(index + 1)")
-                        .font(.caption2.bold())
-                        .padding(5)
-                        .background(.background, in: Circle())
-                        .overlay(Circle().stroke(.purple, lineWidth: 2))
-                }
-                .annotationTitles(.hidden)
-            }
-        }
-            .onTapGesture { position in
-                guard isChoosingDestination,
-                      let coordinate = proxy.convert(position, from: .local) else { return }
-                camera = .region(MKCoordinateRegion(center: coordinate, span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)))
-            }
-            .mapStyle(.standard)
-            .onMapCameraChange(frequency: .continuous) { context in
-                mapCenter = context.region.center
-            }
-            .overlay {
-                if isChoosingDestination {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.largeTitle)
-                        .foregroundStyle(.orange)
-                        .allowsHitTesting(false)
-                        .accessibilityLabel("지도의 중심이 목적지가 됩니다")
-                }
-            }
-            .safeAreaInset(edge: .top) { routePanel }
-            .mapControls {
-                MapCompass()
-                MapScaleView()
-            }
-            .safeAreaInset(edge: .bottom) {
-                if !isChoosingDestination {
-                VStack(alignment: .leading, spacing: 12) {
-                    if !location.isRunning {
-                        Button {
-                            draftDistance = targetDistanceKM
-                            draftPace = paceSecondsPerKM
-                            draftDepartsNow = departureTime == nil
-                            draftDeparture = departureTime ?? Date().addingTimeInterval(300)
-                            showsRunSettings = true
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Label("코스 조건 설정", systemImage: "slider.horizontal.3")
-                                Text("\(targetDistanceKM.formatted()) km · \(paceText(paceSecondsPerKM))/km")
-                                    .font(.subheadline)
-                                if let departureTime {
-                                    Text("출발 \(departureTime.formatted(date: .abbreviated, time: .shortened))")
-                                        .font(.caption)
-                                } else {
-                                    Text("출발: 지금")
-                                        .font(.caption)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        }
-                        .disabled(routePlanner.isLoading)
-                    }
-                    Text(location.message)
-                        .font(.subheadline)
-                    if location.runLocations.count >= 2 {
-                        Label("달린 경로", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                            .font(.caption)
-                            .foregroundStyle(.blue)
-                    }
-                    if location.startedAt != nil {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            HStack {
-                                Label(String(format: "%.2f km", location.distance / 1_000), systemImage: "figure.run")
-                                Spacer()
-                                let seconds = Int(location.elapsedTime(at: context.date))
-                                Label(String(format: "%02d:%02d:%02d", seconds / 3_600, seconds / 60 % 60, seconds % 60), systemImage: "timer")
-                            }
-                            .font(.headline)
-                            .monospacedDigit()
-                        }
-                    }
-                    if location.isRunning {
-                        Button("러닝 종료", role: .destructive, action: location.endRun)
-                            .buttonStyle(.borderedProminent)
-                            .frame(minHeight: 44)
-                    } else {
-                        Button("목표 거리로 순환 코스 찾기") {
-                            Task {
-                                await routePlanner.findLoops(from: location.currentLocation, targetKM: targetDistanceKM, pace: paceSecondsPerKM, departure: departureTime)
-                                showEntireRoute()
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(routePlanner.isLoading || !location.canStartRun)
-                        Button("보행 경로 목적지 선택") {
-                            routePlanner.clear()
-                            isChoosingDestination = true
-                            location.requestCurrentLocation()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(routePlanner.isLoading || !location.canStartRun)
-                        Button(action: location.startRun) {
-                            Text(location.startedAt == nil ? "러닝 시작" : "새 러닝 시작")
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!location.canStartRun || routePlanner.isLoading)
-                    }
-                    if location.isDenied {
-                        Button("설정에서 위치 권한 허용") {
-                            if let url = URL(string: UIApplication.openSettingsURLString) {
-                                openURL(url)
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                    } else if !location.isRunning {
-                        Button(action: location.requestCurrentLocation) {
-                            Label(location.isLocating ? "위치 확인 중…" : "현재 위치로 이동", systemImage: "location.fill")
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(location.isLocating || location.isRestricted || routePlanner.isLoading)
-                    }
-                }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.regularMaterial)
-                }
-            }
-            .task {
-                location.requestCurrentLocation()
-            }
-            .sheet(isPresented: $showsRunSettings) {
-                runSettingsForm
-            }
-            .sheet(isPresented: $showsSignalComparison) {
-                RouteComparisonView(assessments: routePlanner.signalAssessments(pace: paceSecondsPerKM, plans: signalPlans),
-                                    pace: paceSecondsPerKM, departure: routePlanner.calculatedDeparture ?? .now,
-                                    selectedIndex: routePlanner.selectedIndex, canSelect: !location.isRunning,
-                                    target: targetDistanceKM * 1000,
-                                    select: { routePlanner.selectCandidate($0); showEntireRoute() }, plans: $signalPlans)
-            }
-            .sheet(isPresented: $showsCrosswalks) {
-                CrosswalkListView(matches: routePlanner.crosswalkMatches,
-                                  dataAvailable: routePlanner.crosswalkDataAvailable, pace: paceSecondsPerKM,
-                                  signalRows: $signalRows)
-            }
-            .onChange(of: location.currentLocation) { _, newLocation in
-                // 러닝 중에는 사용자가 지도를 이동해도 GPS 갱신이 카메라를 빼앗지 않는다.
-                guard !location.isRunning, !isChoosingDestination,
-                      routePlanner.displayedLegs.isEmpty, !routePlanner.isLoading, let newLocation else { return }
-                camera = .region(MKCoordinateRegion(
-                    center: newLocation.coordinate,
-                    span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-                ))
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var routePanel: some View {
-        if isChoosingDestination || routePlanner.isLoading || !routePlanner.displayedLegs.isEmpty || routePlanner.message != nil {
-            VStack(alignment: .leading, spacing: 8) {
-                if isChoosingDestination {
-                    Text("목적지를 탭하거나 지도를 움직여 중심 표시를 맞춰 주세요.")
-                    HStack {
-                        Button("취소") { isChoosingDestination = false }
-                        Spacer()
-                        Button("여기까지 보행 경로 찾기") {
-                            let destination = mapCenter
-                            isChoosingDestination = false
-                            Task {
-                                if let route = await routePlanner.findRoute(from: location.currentLocation, to: destination, departure: departureTime) {
-                                    let rect = route.polyline.boundingMapRect
-                                    camera = .rect(rect.insetBy(dx: -max(rect.width * 0.2, 200), dy: -max(rect.height * 0.2, 200)))
-                                }
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                } else if routePlanner.isLoading {
-                    HStack {
-                        ProgressView(routePlanner.progress)
-                        Spacer()
-                        Button("취소", action: routePlanner.clear)
-                    }
-                } else if !routePlanner.displayedLegs.isEmpty {
-                    Label("\(routePlanner.selectedLoop == nil ? "보행 경로" : "순환 코스") · \((routePlanner.distance / 1_000).formatted(.number.precision(.fractionLength(2)))) km", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                        .foregroundStyle(.orange)
-                    Text("예상 러닝 \(Int(ceil(routePlanner.distance / 1_000 * Double(paceSecondsPerKM) / 60)))분 · 신호 대기 미반영")
-                        .font(.subheadline)
-                    if let target = routePlanner.targetMeters {
-                        Text("목표 \((target / 1_000).formatted()) km · 차이 \(Int((routePlanner.distance - target).rounded())) m · 거리 기준 선택")
-                            .font(.caption)
-                        if routePlanner.candidates.count > 1 && !location.isRunning {
-                            Picker("순환 코스 후보", selection: Binding(get: { routePlanner.selectedIndex }, set: {
-                                routePlanner.selectCandidate($0)
-                                showEntireRoute()
-                            })) {
-                                ForEach(Array(routePlanner.candidates.enumerated()), id: \.element.id) { index, candidate in
-                                    Text("\(index + 1) · \((candidate.distance / 1_000).formatted(.number.precision(.fractionLength(2)))) km").tag(index)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                        }
-                    } else {
-                        Text("목적지까지 편도 경로 · 목표 거리 \(targetDistanceKM.formatted()) km")
-                            .font(.caption)
-                    }
-                    if let message = routePlanner.message { Text(message).font(.caption) }
-                    Button("코스별 신호 분석 · 계산 가능 여부 확인") { showsSignalComparison = true }
-                    Button("횡단보도 후보 \(routePlanner.crosswalkMatches.count)곳 확인") { showsCrosswalks = true }
-                    if routePlanner.crosswalkMatches.count > 80 {
-                        Text("지도에는 첫 80곳 표시 · 전체는 목록에서 확인").font(.caption)
-                    }
-                    if !location.isRunning { Button("경로 지우기", action: routePlanner.clear) }
-                } else if let message = routePlanner.message {
-                    Text(message).font(.subheadline)
-                    Button("닫기", action: routePlanner.clear)
-                }
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial)
-        }
-    }
-
-    private func showEntireRoute() {
-        guard let rect = routePlanner.bounds else { return }
-        camera = .rect(rect.insetBy(dx: -max(rect.width * 0.2, 200), dy: -max(rect.height * 0.2, 200)))
-    }
-
-    private func paceText(_ seconds: Int) -> String {
-        String(format: "%d분 %02d초", seconds / 60, seconds % 60)
-    }
-
-    private var runSettingsForm: some View {
         NavigationStack {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let validDeparture = draftDepartsNow || draftDeparture > context.date
-                Form {
-                    Section {
-                        NavigationLink("서울 보행신호 연결") {
-                            SeoulSignalView(rows: $signalRows)
-                        }
-                        NavigationLink("서울 신호 운영계획") {
-                            SeoulPlanView(result: $signalPlans, departure: departureTime ?? .now)
-                        }
-                    }
-                    Section("목표 거리") {
-                        Stepper(value: $draftDistance, in: 0.5...42, step: 0.5) {
-                            Text("\(draftDistance.formatted()) km")
-                        }
-                        .accessibilityLabel("목표 거리")
-                        .accessibilityValue("\(draftDistance.formatted()) 킬로미터")
-                        Text("0.5~42 km · 0.5 km 단위")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Section("평균 러닝 페이스") {
-                        Stepper(value: $draftPace, in: 180...900, step: 5) {
-                            Text("\(paceText(draftPace)) / km")
-                        }
-                        .accessibilityLabel("평균 러닝 페이스")
-                        .accessibilityValue("1킬로미터당 \(paceText(draftPace))")
-                        Text("1 km를 달리는 시간 · 3~15분 · 5초 단위")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Section {
-                        Toggle("지금 출발", isOn: $draftDepartsNow)
-                        if !draftDepartsNow {
-                            DatePicker("출발 날짜와 시각", selection: $draftDeparture, in: context.date..., displayedComponents: [.date, .hourAndMinute])
-                            if !validDeparture {
-                                Label("미래의 출발 시각을 선택해 주세요.", systemImage: "exclamationmark.circle")
-                                    .foregroundStyle(.red)
-                            }
-                        }
-                    } header: {
-                        Text("출발 시각")
-                    } footer: {
-                        Text("‘지금’은 코스를 찾는 순간의 시각을 사용합니다. 지정 시각은 코스 계산용이며 러닝을 자동으로 시작하지 않습니다.")
-                    }
-                }
-                .navigationTitle("코스 조건")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("취소") { showsRunSettings = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("저장") {
-                            guard (0.5...42).contains(draftDistance),
-                                  (180...900).contains(draftPace),
-                                  draftDepartsNow || draftDeparture > Date() else { return }
-                            targetDistanceKM = draftDistance
-                            paceSecondsPerKM = draftPace
-                            departureTime = draftDepartsNow ? nil : draftDeparture
-                            routePlanner.clear()
-                            showsRunSettings = false
-                        }
-                        .disabled(!validDeparture)
-                    }
+            Group {
+                if planner.isLoading { loading }
+                else { goal }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { brand.fixedSize() }.sharedBackgroundVisibility(.hidden)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("지도·연결", systemImage: "map") { showsTools = true }
+                        .disabled(planner.isLoading)
                 }
             }
+            .navigationDestination(isPresented: $showsRoute) { routeScreen }
+        }
+        .tint(GrunnYStyle.brand)
+        .foregroundStyle(GrunnYStyle.primary)
+        .preferredColorScheme(.light)
+        .sheet(isPresented: $showsTools, onDismiss: { if location.isRunning { showsSession = true } }) {
+            NavigationStack {
+                MapWorkspaceView(location: location, routePlanner: planner, departureTime: $departure,
+                                 signalRows: $signalRows, signalPlans: $plans)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("완료") { showsTools = false } } }
+            }
+        }
+        .sheet(isPresented: $showsAnalysis) {
+            RouteComparisonView(assessments: planner.signalAssessments(pace: pace, plans: plans), pace: pace,
+                                departure: planner.calculatedDeparture ?? .now, selectedIndex: planner.selectedIndex,
+                                canSelect: !location.isRunning, target: targetKM * 1000,
+                                select: { planner.selectCandidate($0) }, plans: $plans)
+        }
+        .fullScreenCover(isPresented: $showsSession) {
+            DesignedRunSession(location: location, planner: planner, targetPace: pace) { showsSession = false }
+                .preferredColorScheme(.light)
+        }
+        .onChange(of: location.isRunning) { _, running in
+            if running {
+                if showsTools { showsTools = false } else { showsSession = true }
+            }
+        }
+        .task { location.requestCurrentLocation() }
+    }
+
+    private var brand: some View {
+        Text("GrunnY").font(.system(.title3, weight: .bold)).foregroundStyle(GrunnYStyle.brand)
+    }
+
+    private var goal: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("오늘은 어떻게\n달려볼까요?")
+                        .font(.system(.title, weight: .bold)).lineSpacing(2).padding(.top, 12)
+                    Spacer(minLength: 28)
+                    goalControl("DISTANCE", value: String(format: "%.1f km", targetKM),
+                                minus: { changeDistance(-0.5) }, plus: { changeDistance(0.5) },
+                                canMinus: targetKM > 0.5, canPlus: targetKM < 42)
+                    Spacer(minLength: 36)
+                    goalControl("PACE", value: GrunnYStyle.pace(pace) + "/km",
+                                minus: { changePace(-5) }, plus: { changePace(5) },
+                                canMinus: pace > 180, canPlus: pace < 900)
+                    Spacer(minLength: 32)
+                    HStack {
+                        caption("START TIME")
+                        Spacer()
+                        Toggle("지금 출발", isOn: $departsNow).font(.caption).fixedSize()
+                    }
+                    DatePicker("출발 시각", selection: $clockTime, displayedComponents: .hourAndMinute)
+                        .datePickerStyle(.wheel).labelsHidden().frame(maxWidth: .infinity).frame(height: 150).clipped()
+                        .environment(\.locale, Locale(identifier: "ko_KR"))
+                        .opacity(departsNow ? 0.45 : 1).disabled(departsNow)
+                    if !departsNow { Text(clockTime.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(GrunnYStyle.secondary) }
+                    if let message = planner.message {
+                        Text(message).font(.footnote).foregroundStyle(GrunnYStyle.brand).padding(.top, 8)
+                    }
+                    if !location.canStartRun {
+                        Text(location.message).font(.footnote).foregroundStyle(GrunnYStyle.secondary).padding(.top, 8)
+                        Button("위치 다시 확인", action: location.requestCurrentLocation).font(.footnote)
+                    }
+                    if !planner.displayedLegs.isEmpty {
+                        Button("찾아둔 코스 보기") { showsRoute = true }.padding(.top, 8)
+                    }
+                }
+                .padding(.horizontal, 20).padding(.bottom, 12)
+                .frame(minHeight: max(0, geometry.size.height - 12), alignment: .topLeading)
+            }
+        }
+        .background(GrunnYStyle.background)
+        .safeAreaInset(edge: .bottom) {
+            Button(action: findCourse) { GrunnYPrimaryLabel(title: "코스 찾기") }
+                .buttonStyle(.plain).disabled(!location.canStartRun)
+                .opacity(location.canStartRun ? 1 : 0.5)
+                .padding(.horizontal, 20).padding(.vertical, 12).background(GrunnYStyle.background)
+        }
+    }
+
+    private func goalControl(_ title: String, value: String, minus: @escaping () -> Void,
+                             plus: @escaping () -> Void, canMinus: Bool, canPlus: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            caption(title)
+            HStack {
+                Button(action: minus) { Image("Design-minus").resizable().frame(width: 20, height: 20).frame(width: 44, height: 44).background(GrunnYStyle.control, in: Circle()) }
+                    .disabled(!canMinus).accessibilityLabel(title == "PACE" ? "페이스 5초 줄이기" : "거리 0.5킬로미터 줄이기")
+                Spacer(minLength: 8)
+                Text(value).font(.system(.title, weight: .bold)).monospacedDigit().minimumScaleFactor(0.7).lineLimit(1)
+                Spacer(minLength: 8)
+                Button(action: plus) { Image("Design-plus").resizable().frame(width: 20, height: 20).frame(width: 44, height: 44).background(GrunnYStyle.control, in: Circle()) }
+                    .disabled(!canPlus).accessibilityLabel(title == "PACE" ? "페이스 5초 늘리기" : "거리 0.5킬로미터 늘리기")
+            }.buttonStyle(.plain)
+            Rectangle().fill(GrunnYStyle.border).frame(height: 1)
+        }
+    }
+
+    private var loading: some View {
+        VStack(alignment: .leading) {
+            Text("달릴 길을\n찾고 있어요.").font(.system(.title, weight: .bold)).padding(.top, 40)
+            Spacer()
+            ZStack {
+                Circle().stroke(GrunnYStyle.gradient, lineWidth: 10)
+                VStack(spacing: 12) {
+                    ProgressView().tint(GrunnYStyle.brand)
+                    Text("코스 만드는 중").font(.subheadline.weight(.medium))
+                }
+            }.frame(width: 156, height: 156).frame(maxWidth: .infinity)
+            Text(planner.progress).font(.caption).foregroundStyle(GrunnYStyle.secondary).frame(maxWidth: .infinity).padding(.top, 24)
+            Spacer()
+            Button("취소") { searchTask?.cancel(); planner.clear() }.frame(maxWidth: .infinity, minHeight: 44)
+        }.padding(20).background(GrunnYStyle.background)
+    }
+
+    private var routeScreen: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("달릴 길을 찾았어요.").font(.system(.title, weight: .bold))
+                DesignedRouteMap(planner: planner, location: location).frame(height: 330)
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .shadow(color: GrunnYStyle.brand.opacity(0.1), radius: 12, y: 8)
+                HStack {
+                    metric(String(format: "%.2f km", planner.distance / 1000), "거리")
+                    metric("\(Int(ceil(planner.distance / 1000 * Double(pace) / 60))) min", "예상 시간 · 대기 제외")
+                }
+                HStack(spacing: 12) {
+                    Text(GrunnYStyle.pace(pace) + "/km").font(.title3.bold())
+                    caption("목표 페이스")
+                }
+                Text("보행 가능한 경로예요. 신호 대기·경사도는 아직 반영되지 않았어요.")
+                    .font(.subheadline).foregroundStyle(GrunnYStyle.brand)
+                    .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(GrunnYStyle.mint, in: RoundedRectangle(cornerRadius: 12))
+                if planner.candidates.count > 1 {
+                    Picker("코스 후보", selection: Binding(get: { planner.selectedIndex }, set: { planner.selectCandidate($0) })) {
+                        ForEach(Array(planner.candidates.enumerated()), id: \.element.id) { index, candidate in
+                            Text(String(format: "%.2f km", candidate.distance / 1000)).tag(index)
+                        }
+                    }.pickerStyle(.segmented)
+                }
+                Button("코스별 신호 분석") { showsAnalysis = true }.font(.footnote)
+                if let message = planner.message { Text(message).font(.footnote) }
+            }.padding(20)
+        }
+        .background(GrunnYStyle.background)
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            Button { location.startRun() } label: { GrunnYPrimaryLabel(title: "이 코스로 달리기") }
+                .buttonStyle(.plain).disabled(!location.canStartRun || planner.displayedLegs.isEmpty)
+                .padding(.horizontal, 20).padding(.vertical, 12).background(GrunnYStyle.background)
+        }
+    }
+
+    private func caption(_ value: String) -> some View { Text(value).font(.caption).foregroundStyle(GrunnYStyle.secondary) }
+    private func metric(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) { Text(value).font(.system(.title, weight: .bold)).minimumScaleFactor(0.7).lineLimit(1); caption(label) }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func changeDistance(_ delta: Double) { targetKM = min(42, max(0.5, targetKM + delta)); planner.clear() }
+    private func changePace(_ delta: Int) { pace = min(900, max(180, pace + delta)); planner.clear() }
+    private func findCourse() {
+        departure = departsNow ? nil : clockTime
+        searchTask = Task { @MainActor in
+            await planner.findLoops(from: location.currentLocation, targetKM: targetKM, pace: pace, departure: departure)
+            if !Task.isCancelled, !planner.displayedLegs.isEmpty { showsRoute = true }
         }
     }
 }
 
-#Preview {
-    ContentView()
-}
+#Preview { ContentView() }

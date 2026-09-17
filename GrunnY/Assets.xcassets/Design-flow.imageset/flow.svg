@@ -1,0 +1,10 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="336.002" height="24.0139" viewBox="0 0 336.002 24.0139" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path id="Pace flow" d="M3.00081 17.0008C65.0008 -2.99919 105.001 35.0008 163.001 15.0008C219.001 -4.99919 265.001 25.0008 333.001 3.00081" stroke="url(#paint0_linear_0_7)" stroke-width="6" stroke-linecap="round"/>
+<defs>
+<linearGradient id="paint0_linear_0_7" x1="3.00081" y1="12.0077" x2="333.001" y2="12.0077" gradientUnits="userSpaceOnUse">
+<stop stop-color="#4DEDD8"/>
+<stop offset="0.55" stop-color="#11ADA9"/>
+<stop offset="1" stop-color="#0D5F55"/>
+</linearGradient>
+</defs>
+</svg>
