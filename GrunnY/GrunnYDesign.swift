@@ -260,7 +260,7 @@ struct DesignedRunSession: View {
                 Button("저장 다시 시도") { location.saveCompletedRun() }
             }
             VStack(alignment: .leading, spacing: 12) {
-                Text("오늘의 흐름을\n완성했어요").font(.system(.title, weight: .bold))
+                Text(location.missionComplete ? "오늘의 흐름을\n완성했어요" : "오늘의 러닝을\n마쳤어요").font(.system(.title, weight: .bold))
                 HStack(alignment: .firstTextBaseline, spacing: 20) {
                     Text(String(format: "%.2f", location.distance / 1000)).font(.system(size: 58, weight: .bold)).monospacedDigit()
                     Text("km").foregroundStyle(GrunnYStyle.secondary)

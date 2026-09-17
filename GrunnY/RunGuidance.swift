@@ -128,10 +128,10 @@ final class RunGuidance {
         }
         progress = max(progress, best.meters)
         lastOnRouteTravel = traveled
-        let next = instructions.indices.first { instructions[$0].meters > progress + 8 }
-        let index = next ?? instructions.indices.last
+        let next = instructions.indices.first { instructions[$0].meters > 0 && instructions[$0].meters >= progress - 8 }
+        let index = next
         guard let index else {
-            show("경로를 따라 달려 주세요", "카드를 눌러 지도를 확인할 수 있어요", "location")
+            show("경로를 따라 달려 주세요", "목적지까지 약 \(Int(max(0, total - progress).rounded()))m 남았어요", "location")
             return
         }
         let instruction = instructions[index]
@@ -149,6 +149,13 @@ final class RunGuidance {
         }
         subtitle = "길은 계속 음성으로 안내할게요"
         symbol = action.symbol
+    }
+
+    func checkFreshness(now: Date = .now) {
+        guard !arrived, !offRoute.disabled,
+              previousDate == nil || now.timeIntervalSince(previousDate!) > 15 else { return }
+        arrivalFixes = 0
+        show("현재 위치 확인 중", "GPS 위치를 확인하면 안내를 이어갈게요", "location")
     }
 
     static func action(_ instruction: String) -> (text: String, symbol: String) {

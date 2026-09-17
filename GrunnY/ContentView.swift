@@ -184,7 +184,7 @@ struct ContentView: View {
                         Text(selectedSignalWait.map { "\(Int($0.rounded()))초" } ?? "—")
                             .font(.system(size: 34, weight: .bold))
                             .foregroundStyle(GrunnYStyle.primary)
-                        Text("선택한 코스의 총 신호 대기 추정치예요.")
+                        Text("주기 정보가 없으면 120초·빨간불 50%를 가정해요. 실제 신호와 대기 시간은 달라요.")
                             .font(.caption).foregroundStyle(GrunnYStyle.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -24,6 +24,8 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
     private var runID = UUID()
     private(set) var saveError: String?
     private var completedRecord: RunRecord?
+    private var freshnessTask: Task<Void, Never>?
+    var missionComplete: Bool { completedRecord?.missionComplete == true }
 
     func prepareRun(routes: [MKRoute], targetDistance: Double?, targetPace: Int, estimatedWait: Double?) {
         guidance.configure(routes: routes)
@@ -87,6 +89,14 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
         manager.showsBackgroundLocationIndicator = true
         message = "러닝 중 · GPS 위치를 기다리고 있습니다."
         manager.startUpdatingLocation()
+        freshnessTask?.cancel()
+        freshnessTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                guard let self, self.isRunning else { return }
+                self.guidance.checkFreshness()
+            }
+        }
     }
 
     enum FinishReason: String { case manual, arrival, interrupted }
@@ -94,6 +104,7 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
     func endRun(reason: FinishReason = .manual) {
         guard isRunning, let startedAt else { return }
         isRunning = false
+        freshnessTask?.cancel(); freshnessTask = nil
         let ended = Date()
         endedAt = ended
         manager.stopUpdatingLocation()

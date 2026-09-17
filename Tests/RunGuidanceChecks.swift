@@ -58,6 +58,22 @@ import CoreLocation
         precondition(guide.arrived, "Completed loop should arrive")
         precondition(RunGuidance.voiceInstruction("좌회전", meters: 50) == "50미터 앞에서 왼쪽으로 가세요.")
         precondition(RunGuidance.voiceInstruction("직진", meters: 0) == "그대로 직진하세요.")
+        guide.configure(steps: [
+            .init(coordinates: [a, b], instruction: "직진"),
+            .init(coordinates: [b, c], instruction: "좌회전")
+        ])
+        guide.update(location: point(a), now: now, speak: false)
+        guide.update(location: point(halfway, 8), now: now.addingTimeInterval(8), speak: false)
+        let beforeTurn = CLLocationCoordinate2D(latitude: b.latitude, longitude: b.longitude - 0.00004)
+        guide.update(location: point(beforeTurn, 16), now: now.addingTimeInterval(16), speak: false)
+        precondition(guide.title.contains("왼쪽"), "Do not skip the turn before reaching it")
+        let afterTurn = CLLocationCoordinate2D(latitude: b.latitude + 0.0003, longitude: b.longitude)
+        guide.update(location: point(afterTurn, 24), now: now.addingTimeInterval(24), speak: false)
+        precondition(!guide.title.contains("왼쪽"), "Do not keep a passed final turn")
+        guide.checkFreshness(now: now.addingTimeInterval(45))
+        precondition(guide.title == "현재 위치 확인 중", "No GPS callback must invalidate old directions")
+        guide.update(location: point(afterTurn, 46), now: now.addingTimeInterval(46), speak: false)
+        precondition(guide.title != "현재 위치 확인 중", "Recover on a fresh position")
         print("Guidance: loop start, distance, off-route jump, stale/inaccurate GPS and missing steps passed")
     }
 }

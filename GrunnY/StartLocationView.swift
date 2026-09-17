@@ -80,6 +80,7 @@ struct StartLocationView: View {
     let location: LocationManager
     @Binding var selection: RunStartPoint?
     let next: () -> Void
+    @State private var showsAppInfo = false
     @State private var search = StartPlaceSearch()
     @State private var query = ""
     @State private var showsResults = false
@@ -104,7 +105,11 @@ struct StartLocationView: View {
                     HStack {
                         Text("GrunnY").font(.title3.bold()).foregroundStyle(GrunnYStyle.brand)
                         Spacer()
+                        Button { showsAppInfo = true } label: {
+                            Image(systemName: "info.circle").frame(width: 44, height: 44)
+                        }.accessibilityLabel("앱 정보 및 러닝 기록")
                     }.frame(height: 44)
+                    .sheet(isPresented: $showsAppInfo) { AppInfoView() }
                     Text("어디서\n출발할까요?")
                         .font(.system(size: titleSize, weight: .bold)).lineSpacing(2)
                     VStack(alignment: .leading, spacing: 16) {

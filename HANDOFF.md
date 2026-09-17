@@ -308,3 +308,17 @@ swiftc -module-cache-path /tmp/GrunnY-swift-module-cache \
 - 지도 서비스가 모든 보행 요청에 실패하고 이전 결과도 없으면 코스 제공은 보장할 수 없다. 사용자에게 이 한계를 설명했다.
 - `RouteFallbackPolicy.swift` 및 `Tests/RouteFallbackChecks.swift` 추가: 한 후보, 거리 우선순위, 대체 후보, 잘못된 값, 시설 수 정렬 검사 통과.
 - 빌드 로그 `/tmp/GrunnY-fallback.log`.
+
+
+## App Store 출시 준비 보완 (2026-09-18)
+
+- 첫 화면 정보 버튼, AppInfoView, 기록 확인 및 개별/전체 삭제 추가.
+- 공개 정책·지원: https://grunny-support.wapples150.chatgpt.site (privacy.html). 운영자 최서진, seojin060504@gmail.com. Sites 공개 배포 성공. 원본은 별도 Git 디렉터리 ReleaseSite.
+- PrivacyInfo.xcprivacy(UserDefaults CA92.1), 번들 PrivacyPolicy.txt 추가.
+- RunGuidance 최종 회전 통과 후 잔류 안내 수정, LocationManager 2초 간격 신선도 확인. 최신 위치 15초 초과면 안내 만료.
+- 결과에 기본 주기 120초·빨간불 50% 가정 공개; 실제 신호 데이터 자동 연결을 구현한 것은 아님.
+- 미션 성공일 때만 성공 제목 사용.
+- RunAnnouncementsChecks, RunGuidanceChecks, RunRecordChecks 통과. Release 빌드 및 Archive 생성, 서명 검증 통과. 실제 기기 실행은 사용자 지시에 따라 하지 않음.
+- APP_STORE_SUBMISSION.md에 소개/심사 메모/URL 준비. 제출 완료나 무리젝 보장 아님.
+
+배포 결과: Xcode 자동 프로파일 갱신 후 App Store 배포용 IPA 내보내기 성공. 보관 위치: `build/AppStore/GrunnY.ipa`, `build/AppStore/GrunnY.xcarchive`. 심사 제출·App Store Connect 최종 Validate는 미실행.
