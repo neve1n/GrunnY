@@ -21,3 +21,7 @@ Intentional functional differences:
 - Sharing opens the native share sheet with actual distance/time text.
 
 Validation: Simulator build succeeded. Visually inspected goal and loading screens; corrected native toolbar brand clipping and the tools-sheet → running presentation sequence. Existing authenticated iPhone 17 session was not reinstalled. iPhone 17 Pro was used for design verification. End-to-end route/run/completion and large accessibility text still require additional device/UI verification.
+
+## Goal screen refinement
+
+The user's follow-up explicitly preserves functionality in project files, not all entry points on the goal screen. Removed the goal toolbar/map menu, departure-mode toggle and saved-route shortcut from this view. Existing MapWorkspaceView/API views and services remain in the project. Goal now uses an in-content GrunnY brand, reference spacing and type sizes, right-aligned gradient CTA, and a native two-column 24-hour wheel. Scrolling the wheel selects the next occurrence of that time; the goal action uses the displayed reserved time. Validation/location errors remain visible when necessary.

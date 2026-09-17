@@ -20,15 +20,35 @@ enum GrunnYStyle {
     }
 }
 
+struct CourseLoadingRing: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            TimelineView(.animation(paused: reduceMotion)) { context in
+                let turns = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4
+                Circle()
+                    .stroke(AngularGradient(colors: [GrunnYStyle.mint, GrunnYStyle.teal, GrunnYStyle.brand, GrunnYStyle.teal, GrunnYStyle.mint], center: .center), lineWidth: 10)
+                    .rotationEffect(.degrees(reduceMotion ? 0 : turns * 360))
+            }
+            .accessibilityHidden(true)
+            Text("코스 탐색중")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(GrunnYStyle.brand)
+        }
+    }
+}
+
 struct GrunnYPrimaryLabel: View {
     let title: String
+    var trailingAligned = false
     var body: some View {
         HStack(spacing: 14) {
             Spacer(minLength: 0)
             Text(title).font(.headline)
             Image("Design-arrow").resizable().frame(width: 20, height: 20).accessibilityHidden(true)
-            Spacer(minLength: 0)
-        }.foregroundStyle(.white).frame(minHeight: 56)
+            if !trailingAligned { Spacer(minLength: 0) }
+        }.padding(.trailing, trailingAligned ? 26 : 0).foregroundStyle(.white).frame(minHeight: 56)
             .background(GrunnYStyle.gradient, in: RoundedRectangle(cornerRadius: 16))
             .contentShape(RoundedRectangle(cornerRadius: 16))
     }
@@ -71,7 +91,6 @@ struct DesignedRunSession: View {
     let done: () -> Void
     @State private var showsMap = false
     @State private var confirmsFinish = false
-
     var body: some View {
         NavigationStack {
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -85,15 +104,32 @@ struct DesignedRunSession: View {
                     }.ignoresSafeArea()
                 }
             }
+            .safeAreaInset(edge: .bottom) {
+                if location.isRunning {
+                    Button { confirmsFinish = true } label: {
+                        Text("러닝 종료")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                            .background(GrunnYStyle.gradient, in: RoundedRectangle(cornerRadius: 16))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 20).padding(.vertical, 12)
+                    .background(GrunnYStyle.background)
+                } else {
+                    Button(action: done) {
+                        Text("완료").font(.headline).foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                            .background(GrunnYStyle.gradient, in: RoundedRectangle(cornerRadius: 16))
+                    }.buttonStyle(.plain)
+                        .padding(.horizontal, 20).padding(.vertical, 12)
+                        .background(GrunnYStyle.background)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Text("GrunnY").font(.title3.bold()).foregroundStyle(GrunnYStyle.brand).fixedSize() }.sharedBackgroundVisibility(.hidden)
-                ToolbarItem(placement: .topBarTrailing) { Button("지도", systemImage: "map") { showsMap = true } }
             }
             .navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog("러닝을 종료할까요?", isPresented: $confirmsFinish, titleVisibility: .visible) {
-                Button("러닝 종료", role: .destructive, action: location.endRun)
-                Button("계속 달리기", role: .cancel) { }
-            }
             .sheet(isPresented: $showsMap) {
                 NavigationStack {
                     DesignedRouteMap(planner: planner, location: location).ignoresSafeArea(edges: .bottom)
@@ -101,61 +137,120 @@ struct DesignedRunSession: View {
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("완료") { showsMap = false } } }
                 }
             }
-        }.foregroundStyle(GrunnYStyle.primary).tint(GrunnYStyle.brand)
+        }
+        .disabled(confirmsFinish)
+        .accessibilityHidden(confirmsFinish)
+        .overlay {
+            if confirmsFinish {
+                ZStack {
+                    Color.black.opacity(0.18).ignoresSafeArea()
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("러닝을 종료할까요?")
+                            .font(.system(size: 24, weight: .bold))
+                            .accessibilityAddTraits(.isHeader)
+                        Text("종료하면 지금까지의 러닝 기록을\n확인할 수 있어요.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(GrunnYStyle.secondary)
+                            .lineSpacing(6).padding(.top, 16)
+                        Button { confirmsFinish = false } label: {
+                            Text("계속 달리기").font(.system(size: 18, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity, minHeight: 56)
+                                .background(GrunnYStyle.gradient, in: RoundedRectangle(cornerRadius: 16))
+                        }.buttonStyle(.plain).padding(.top, 26)
+                        Button(role: .destructive) {
+                            confirmsFinish = false
+                            location.endRun()
+                        } label: {
+                            Text("러닝 종료").font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(Color(red: 0.88, green: 0.15, blue: 0.18))
+                                .frame(maxWidth: .infinity, minHeight: 52)
+                                .background(GrunnYStyle.soft, in: RoundedRectangle(cornerRadius: 16))
+                        }.buttonStyle(.plain).padding(.top, 16)
+                    }
+                    .padding(24)
+                    .frame(maxWidth: 350, minHeight: 300, alignment: .topLeading)
+                    .background(GrunnYStyle.background, in: RoundedRectangle(cornerRadius: 24))
+                    .shadow(color: Color(red: 0.02, green: 0.08, blue: 0.07).opacity(0.18), radius: 32, y: 12)
+                    .padding(.horizontal, 20)
+                    .accessibilityAddTraits(.isModal)
+                    .accessibilityAction(.escape) { confirmsFinish = false }
+                }
+            }
+        }
+        .onChange(of: location.isRunning) { _, running in
+            if !running { confirmsFinish = false }
+        }
+        .foregroundStyle(GrunnYStyle.primary).tint(GrunnYStyle.brand)
     }
 
     private func running(at now: Date) -> some View {
-        VStack(spacing: 28) {
-            VStack(spacing: 16) {
-                Text("현재 페이스").font(.subheadline).foregroundStyle(GrunnYStyle.secondary)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(currentPace(at: now)).font(.system(size: 64, weight: .bold)).minimumScaleFactor(0.5).lineLimit(1)
-                    Text("/km").foregroundStyle(GrunnYStyle.brand)
-                }.monospacedDigit()
-                Text("●  목표 \(GrunnYStyle.pace(targetPace))/km").font(.subheadline).foregroundStyle(GrunnYStyle.brand)
-                    .padding(.horizontal, 18).padding(.vertical, 10).background(.white.opacity(0.82), in: Capsule())
-                Image("Design-flow").resizable().frame(height: 24).accessibilityHidden(true).padding(.top, 12)
-            }.padding(.top, 24)
-            Button { showsMap = true } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("달리는 경로").font(.caption).foregroundStyle(GrunnYStyle.brand)
-                        Text("지도에서 코스를 확인하세요").font(.title3.bold())
-                        Text("\(location.message)").font(.caption).foregroundStyle(GrunnYStyle.secondary)
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: "map").font(.title2).foregroundStyle(GrunnYStyle.brand)
-                }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(GrunnYStyle.soft, in: RoundedRectangle(cornerRadius: 16))
-            }.buttonStyle(.plain)
-            VStack(spacing: 20) {
-                Rectangle().fill(GrunnYStyle.border).frame(height: 1)
-                HStack {
-                    stat("거리", value: String(format: "%.2f km", location.distance / 1000))
-                    stat("시간", value: GrunnYStyle.elapsed(location.elapsedTime(at: now)))
-                }
+        VStack(spacing: 0) {
+            Text("현재 페이스")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(GrunnYStyle.secondary)
+                .padding(.top, 70)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(currentPace(at: now))
+                    .font(.system(size: 68, weight: .bold))
+                    .minimumScaleFactor(0.5).lineLimit(1)
+                    .monospacedDigit()
+                Text("/km").font(.system(size: 18))
+                    .foregroundStyle(GrunnYStyle.brand)
             }
-            HStack(alignment: .top) {
-                VStack(spacing: 10) {
-                    Button { confirmsFinish = true } label: {
-                        Image(systemName: "stop.fill").foregroundStyle(.red).frame(width: 64, height: 64)
-                            .overlay(Circle().stroke(.red, lineWidth: 1.5))
-                    }.accessibilityLabel("러닝 종료")
-                    Text("종료").font(.caption)
+            .padding(.top, 12)
+            HStack(spacing: 9) {
+                Circle().fill(GrunnYStyle.teal).frame(width: 12, height: 12)
+                    .accessibilityHidden(true)
+                Text("목표 \(GrunnYStyle.pace(targetPace))/km")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(GrunnYStyle.brand)
+            }
+            .padding(.top, 18)
+            Image("Design-flow").resizable().frame(height: 24)
+                .accessibilityHidden(true).padding(.top, 28)
+
+            Button { showsMap = true } label: {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("달리는 경로")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(GrunnYStyle.brand)
+                        Text("지도에서 코스 확인")
+                            .font(.system(size: 24, weight: .bold))
+                            .minimumScaleFactor(0.7).lineLimit(1)
+                        Text("선택한 코스와 현재 위치를 확인해요")
+                            .font(.system(size: 12))
+                            .foregroundStyle(GrunnYStyle.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "map")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(GrunnYStyle.teal, in: Circle())
                 }
-                Spacer()
-                VStack(spacing: 10) {
-                    Image(systemName: "pause.fill").font(.largeTitle).foregroundStyle(GrunnYStyle.brand.opacity(0.45))
-                        .frame(width: 88, height: 88).background(GrunnYStyle.mint.opacity(0.5), in: Circle())
-                    Text("일시정지 · 준비 중").font(.caption).foregroundStyle(GrunnYStyle.secondary)
-                }.accessibilityElement(children: .combine)
-                Spacer()
-                VStack(spacing: 10) {
-                    Image(systemName: "lock").foregroundStyle(GrunnYStyle.secondary).frame(width: 64, height: 64)
-                        .overlay(Circle().stroke(GrunnYStyle.border))
-                    Text("잠금 · 준비 중").font(.caption).foregroundStyle(GrunnYStyle.secondary)
-                }.accessibilityElement(children: .combine)
-            }.padding(.top, 32)
-        }.padding(20).padding(.bottom, 24)
+                .padding(20).frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+                .background(GrunnYStyle.soft, in: RoundedRectangle(cornerRadius: 16))
+            }
+            .buttonStyle(.plain).padding(.top, 76)
+
+            Rectangle().fill(GrunnYStyle.border).frame(height: 1).padding(.top, 36)
+            HStack(spacing: 40) {
+                runningStat("거리", value: String(format: "%.2f km", location.distance / 1000))
+                runningStat("시간", value: GrunnYStyle.elapsed(location.elapsedTime(at: now)))
+            }
+            .padding(.top, 24)
+        }
+        .padding(.horizontal, 20).padding(.bottom, 24)
+    }
+
+    private func runningStat(_ label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(label).font(.system(size: 12)).foregroundStyle(GrunnYStyle.secondary)
+            Text(value).font(.system(size: 26, weight: .bold))
+                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func complete(at now: Date) -> some View {
@@ -172,8 +267,6 @@ struct DesignedRunSession: View {
                 stat("평균 페이스", value: averagePace(at: now))
                 Rectangle().fill(GrunnYStyle.border).frame(width: 1, height: 56)
                 stat("시간", value: GrunnYStyle.elapsed(location.elapsedTime(at: now)))
-                Rectangle().fill(GrunnYStyle.border).frame(width: 1, height: 56)
-                stat("칼로리 · 미측정", value: "—")
             }.padding(20).background(GrunnYStyle.soft, in: RoundedRectangle(cornerRadius: 16))
             VStack(alignment: .leading, spacing: 20) {
                 Text("페이스 흐름").font(.subheadline).foregroundStyle(GrunnYStyle.brand)
@@ -181,20 +274,13 @@ struct DesignedRunSession: View {
                 if points.count >= 2 {
                     Chart(points, id: \.date) { point in
                         LineMark(x: .value("시간", point.date), y: .value("분/km", point.pace / 60))
-                            .foregroundStyle(GrunnYStyle.teal).lineStyle(.init(lineWidth: 3))
-                    }.chartYAxis { AxisMarks(position: .leading) }.frame(height: 170)
+                            .foregroundStyle(GrunnYStyle.gradient).lineStyle(.init(lineWidth: 5, lineCap: .round, lineJoin: .round))
+                    }.chartYAxis { AxisMarks(position: .leading) }.frame(height: 190)
                 } else {
                     Text("페이스를 표시할 GPS 기록이 부족해요.").font(.subheadline).foregroundStyle(GrunnYStyle.secondary)
                         .frame(maxWidth: .infinity, minHeight: 170)
                 }
             }.padding(20).background(GrunnYStyle.soft, in: RoundedRectangle(cornerRadius: 16))
-            Text(location.message).font(.caption).foregroundStyle(GrunnYStyle.secondary)
-            HStack(spacing: 12) {
-                ShareLink(item: "GrunnY 러닝 · \(String(format: "%.2f", location.distance / 1000)) km · \(GrunnYStyle.elapsed(location.elapsedTime(at: now)))") {
-                    Text("공유").font(.headline).frame(width: 92, height: 56).background(GrunnYStyle.soft, in: RoundedRectangle(cornerRadius: 16))
-                }
-                Button(action: done) { GrunnYPrimaryLabel(title: "완료") }.buttonStyle(.plain)
-            }
         }.padding(20)
     }
 

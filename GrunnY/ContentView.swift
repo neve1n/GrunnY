@@ -8,7 +8,7 @@ struct ContentView: View {
     @AppStorage("paceSecondsPerKM") private var pace = 330
     @State private var departure: Date?
     @State private var clockTime = Date().addingTimeInterval(300)
-    @State private var departsNow = true
+    @State private var departsNow = false
     @State private var signalRows: [SeoulSignalRow] = []
     @State private var plans: SeoulPlanCollection?
     @State private var showsTools = false
@@ -24,13 +24,7 @@ struct ContentView: View {
                 else { goal }
             }
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { brand.fixedSize() }.sharedBackgroundVisibility(.hidden)
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("지도·연결", systemImage: "map") { showsTools = true }
-                        .disabled(planner.isLoading)
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showsRoute) { routeScreen }
         }
         .tint(GrunnYStyle.brand)
@@ -50,7 +44,10 @@ struct ContentView: View {
                                 select: { planner.selectCandidate($0) }, plans: $plans)
         }
         .fullScreenCover(isPresented: $showsSession) {
-            DesignedRunSession(location: location, planner: planner, targetPace: pace) { showsSession = false }
+            DesignedRunSession(location: location, planner: planner, targetPace: pace) {
+                showsRoute = false
+                showsSession = false
+            }
                 .preferredColorScheme(.light)
         }
         .onChange(of: location.isRunning) { _, running in
@@ -69,27 +66,27 @@ struct ContentView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    brand.frame(height: 44, alignment: .leading)
                     Text("오늘은 어떻게\n달려볼까요?")
-                        .font(.system(.title, weight: .bold)).lineSpacing(2).padding(.top, 12)
-                    Spacer(minLength: 28)
+                        .font(.system(size: 28, weight: .bold)).lineSpacing(2).padding(.top, 4)
+                    Color.clear.frame(height: 28)
                     goalControl("DISTANCE", value: String(format: "%.1f km", targetKM),
                                 minus: { changeDistance(-0.5) }, plus: { changeDistance(0.5) },
                                 canMinus: targetKM > 0.5, canPlus: targetKM < 42)
-                    Spacer(minLength: 36)
+                    Color.clear.frame(height: 68)
                     goalControl("PACE", value: GrunnYStyle.pace(pace) + "/km",
                                 minus: { changePace(-5) }, plus: { changePace(5) },
                                 canMinus: pace > 180, canPlus: pace < 900)
-                    Spacer(minLength: 32)
-                    HStack {
-                        caption("START TIME")
-                        Spacer()
-                        Toggle("지금 출발", isOn: $departsNow).font(.caption).fixedSize()
+                    Color.clear.frame(height: 68)
+                    Text("START TIME").font(.system(size: 12, weight: .bold)).tracking(0.8).foregroundStyle(GrunnYStyle.secondary)
+                    GoalTimeWheel(date: $clockTime) {
+                        departsNow = false
+                        planner.clear()
                     }
-                    DatePicker("출발 시각", selection: $clockTime, displayedComponents: .hourAndMinute)
-                        .datePickerStyle(.wheel).labelsHidden().frame(maxWidth: .infinity).frame(height: 150).clipped()
-                        .environment(\.locale, Locale(identifier: "ko_KR"))
-                        .opacity(departsNow ? 0.45 : 1).disabled(departsNow)
-                    if !departsNow { Text(clockTime.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(GrunnYStyle.secondary) }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 172)
+                    .overlay { Text(":").font(.system(size: 24, weight: .bold)).accessibilityHidden(true).allowsHitTesting(false) }
+                    .padding(.top, 8)
                     if let message = planner.message {
                         Text(message).font(.footnote).foregroundStyle(GrunnYStyle.brand).padding(.top, 8)
                     }
@@ -97,9 +94,7 @@ struct ContentView: View {
                         Text(location.message).font(.footnote).foregroundStyle(GrunnYStyle.secondary).padding(.top, 8)
                         Button("위치 다시 확인", action: location.requestCurrentLocation).font(.footnote)
                     }
-                    if !planner.displayedLegs.isEmpty {
-                        Button("찾아둔 코스 보기") { showsRoute = true }.padding(.top, 8)
-                    }
+
                 }
                 .padding(.horizontal, 20).padding(.bottom, 12)
                 .frame(minHeight: max(0, geometry.size.height - 12), alignment: .topLeading)
@@ -107,7 +102,7 @@ struct ContentView: View {
         }
         .background(GrunnYStyle.background)
         .safeAreaInset(edge: .bottom) {
-            Button(action: findCourse) { GrunnYPrimaryLabel(title: "코스 찾기") }
+            Button(action: findCourse) { GrunnYPrimaryLabel(title: "코스 찾기", trailingAligned: true) }
                 .buttonStyle(.plain).disabled(!location.canStartRun)
                 .opacity(location.canStartRun ? 1 : 0.5)
                 .padding(.horizontal, 20).padding(.vertical, 12).background(GrunnYStyle.background)
@@ -117,12 +112,12 @@ struct ContentView: View {
     private func goalControl(_ title: String, value: String, minus: @escaping () -> Void,
                              plus: @escaping () -> Void, canMinus: Bool, canPlus: Bool) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            caption(title)
+            Text(title).font(.system(size: 12, weight: title == "PACE" ? .bold : .regular)).tracking(0.8).foregroundStyle(GrunnYStyle.secondary)
             HStack {
                 Button(action: minus) { Image("Design-minus").resizable().frame(width: 20, height: 20).frame(width: 44, height: 44).background(GrunnYStyle.control, in: Circle()) }
                     .disabled(!canMinus).accessibilityLabel(title == "PACE" ? "페이스 5초 줄이기" : "거리 0.5킬로미터 줄이기")
                 Spacer(minLength: 8)
-                Text(value).font(.system(.title, weight: .bold)).monospacedDigit().minimumScaleFactor(0.7).lineLimit(1)
+                Text(value).font(.system(size: 28, weight: .bold)).monospacedDigit().minimumScaleFactor(0.7).lineLimit(1)
                 Spacer(minLength: 8)
                 Button(action: plus) { Image("Design-plus").resizable().frame(width: 20, height: 20).frame(width: 44, height: 44).background(GrunnYStyle.control, in: Circle()) }
                     .disabled(!canPlus).accessibilityLabel(title == "PACE" ? "페이스 5초 늘리기" : "거리 0.5킬로미터 늘리기")
@@ -133,15 +128,11 @@ struct ContentView: View {
 
     private var loading: some View {
         VStack(alignment: .leading) {
+            brand
             Text("달릴 길을\n찾고 있어요.").font(.system(.title, weight: .bold)).padding(.top, 40)
             Spacer()
-            ZStack {
-                Circle().stroke(GrunnYStyle.gradient, lineWidth: 10)
-                VStack(spacing: 12) {
-                    ProgressView().tint(GrunnYStyle.brand)
-                    Text("코스 만드는 중").font(.subheadline.weight(.medium))
-                }
-            }.frame(width: 156, height: 156).frame(maxWidth: .infinity)
+            CourseLoadingRing()
+                .frame(width: 156, height: 156).frame(maxWidth: .infinity)
             Text(planner.progress).font(.caption).foregroundStyle(GrunnYStyle.secondary).frame(maxWidth: .infinity).padding(.top, 24)
             Spacer()
             Button("취소") { searchTask?.cancel(); planner.clear() }.frame(maxWidth: .infinity, minHeight: 44)
@@ -150,40 +141,64 @@ struct ContentView: View {
 
     private var routeScreen: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("달릴 길을 찾았어요.").font(.system(.title, weight: .bold))
-                DesignedRouteMap(planner: planner, location: location).frame(height: 330)
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
-                    .shadow(color: GrunnYStyle.brand.opacity(0.1), radius: 12, y: 8)
-                HStack {
-                    metric(String(format: "%.2f km", planner.distance / 1000), "거리")
-                    metric("\(Int(ceil(planner.distance / 1000 * Double(pace) / 60))) min", "예상 시간 · 대기 제외")
+            VStack(alignment: .leading, spacing: 0) {
+                Button { showsRoute = false } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 20, weight: .medium))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
-                HStack(spacing: 12) {
-                    Text(GrunnYStyle.pace(pace) + "/km").font(.title3.bold())
+                .buttonStyle(.plain)
+                .padding(.leading, -10)
+                .accessibilityLabel("뒤로")
+
+                Text("달릴 길을 찾았어요.")
+                    .font(.system(size: 28, weight: .bold))
+                    .padding(.top, 24)
+                    .padding(.bottom, 20)
+
+                DesignedRouteMap(planner: planner, location: location)
+                    .aspectRatio(350.0 / 368.0, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                    .shadow(color: GrunnYStyle.brand.opacity(0.07), radius: 16, y: 8)
+
+                HStack(spacing: 20) {
+                    metric(String(format: "%.1f km", planner.distance / 1000), "거리")
+                    metric("\(Int(ceil(planner.distance / 1000 * Double(pace) / 60))) min", "예상 시간")
+                }
+                .padding(.top, 22)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(GrunnYStyle.pace(pace) + "/km")
+                        .font(.system(size: 24, weight: .bold))
                     caption("목표 페이스")
                 }
-                Text("보행 가능한 경로예요. 신호 대기·경사도는 아직 반영되지 않았어요.")
-                    .font(.subheadline).foregroundStyle(GrunnYStyle.brand)
-                    .padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(GrunnYStyle.mint, in: RoundedRectangle(cornerRadius: 12))
-                if planner.candidates.count > 1 {
-                    Picker("코스 후보", selection: Binding(get: { planner.selectedIndex }, set: { planner.selectCandidate($0) })) {
-                        ForEach(Array(planner.candidates.enumerated()), id: \.element.id) { index, candidate in
-                            Text(String(format: "%.2f km", candidate.distance / 1000)).tag(index)
-                        }
-                    }.pickerStyle(.segmented)
+                .padding(.top, 18)
+
+                HStack(alignment: .center, spacing: 12) {
+                    Circle().fill(GrunnYStyle.teal).frame(width: 9, height: 9)
+                        .accessibilityHidden(true)
+                    Text("보행 가능한 코스예요. 예상 시간에 신호 대기·경사도는 반영되지 않았어요.")
+                        .font(.system(size: 14, weight: .medium))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Button("코스별 신호 분석") { showsAnalysis = true }.font(.footnote)
-                if let message = planner.message { Text(message).font(.footnote) }
-            }.padding(20)
+                .foregroundStyle(GrunnYStyle.brand)
+                .padding(18)
+                .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                .background(GrunnYStyle.mint, in: RoundedRectangle(cornerRadius: 12))
+                .padding(.top, 20)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
         }
         .background(GrunnYStyle.background)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
-            Button { location.startRun() } label: { GrunnYPrimaryLabel(title: "이 코스로 달리기") }
-                .buttonStyle(.plain).disabled(!location.canStartRun || planner.displayedLegs.isEmpty)
-                .padding(.horizontal, 20).padding(.vertical, 12).background(GrunnYStyle.background)
+            Button { location.startRun() } label: {
+                GrunnYPrimaryLabel(title: "이 코스로 달리기", trailingAligned: true)
+            }
+            .buttonStyle(.plain).disabled(!location.canStartRun || planner.displayedLegs.isEmpty)
+            .padding(.horizontal, 20).padding(.vertical, 12).background(GrunnYStyle.background)
         }
     }
 
