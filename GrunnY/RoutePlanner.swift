@@ -28,6 +28,14 @@ final class RoutePlanner {
     var crosswalkDataAvailable: Bool { CrosswalkCatalog.bundled != nil }
     private var directions: MKDirections?
     private var requestID = UUID()
+    private struct SavedSearch {
+        let origin: CLLocation
+        let target: Double
+        let candidates: [LoopCandidate]
+        let savedAt: Date
+    }
+    // Retain a successful result through a retry; never reuse another start point.
+    private var savedSearch: SavedSearch?
     private(set) var calculatedDeparture: Date?
     private(set) var recommendedSignalRouteID: UUID?
     private(set) var routeSignalEstimates: [UUID: SignalRouteEstimate] = [:]
@@ -194,10 +202,17 @@ final class RoutePlanner {
         destination = origin.coordinate
         let id = requestID
         let startTime = departure ?? Date()
+        let backup = savedSearch.flatMap { saved -> [LoopCandidate]? in
+            guard saved.target == target, saved.origin.distance(from: origin) <= 10,
+                  Date().timeIntervalSince(saved.savedAt) < 900 else { return nil }
+            return saved.candidates
+        }
         calculatedDeparture = startTime
         isLoading = true
         defer { finish(id) }
         var foundLegs: [[MKRoute]] = []
+        var routeSignatures = Set<String>()
+        var matchingCount = 0
         var serviceFailure: String?
         // 세 방향, 각 방향당 최대 한 번 거리 보정: 보행 요청은 최대 18회.
         search: for heading in 0..<3 {
@@ -219,10 +234,20 @@ final class RoutePlanner {
                     }
                     let distance = legs.reduce(0) { $0 + $1.distance }
                     let difference = abs(distance - target) / target
-                    if difference <= 0.05, isConnectedLoop(legs, origin: origin.coordinate), hasLoopArea(legs, distance: distance) {
-                        foundLegs.append(legs)
-                        if foundLegs.count == 2 { break search }
-                        break
+                    guard distance.isFinite, distance > 0 else { break }
+                    if isConnectedLoop(legs, origin: origin.coordinate), hasLoopArea(legs, distance: distance) {
+                        let signature = legs.map { leg in
+                            (0..<leg.polyline.pointCount).map { index in
+                                let coordinate = leg.polyline.points()[index].coordinate
+                                return "\(Int((coordinate.latitude * 100_000).rounded())),\(Int((coordinate.longitude * 100_000).rounded()))"
+                            }.joined(separator: ";")
+                        }.joined(separator: "|")
+                        if routeSignatures.insert(signature).inserted {
+                            foundLegs.append(legs)
+                            if difference <= 0.05 { matchingCount += 1 }
+                        }
+                        if matchingCount >= 2 { break search }
+                        if difference <= 0.05 { break }
                     }
                     radius *= min(1.5, max(0.5, target / distance))
                 } catch {
@@ -239,10 +264,6 @@ final class RoutePlanner {
         if !foundLegs.isEmpty {
             progress = "2/3 · 목표 거리 확인 중…"
             guard requestID == id, !Task.isCancelled else { return }
-            foundLegs = foundLegs.filter { legs in
-                let distance = legs.reduce(0) { $0 + $1.distance }
-                return abs(distance - target) / target <= 0.05
-            }
             progress = crosswalkDataAvailable
                 ? "3/3 · 횡단보도·신호등 정보 확인 중…"
                 : "3/3 · 코스 정리 중…"
@@ -256,29 +277,31 @@ final class RoutePlanner {
                 ["유", "무"].contains($0.crosswalk.signalPresence)
             }
         }
-        let orderedCandidates = found.sorted {
-            if canCompareFacilities {
-                let left = $0.crosswalkMatches.filter { $0.crosswalk.signalPresence == "무" }.count
-                let right = $1.crosswalkMatches.filter { $0.crosswalk.signalPresence == "무" }.count
-                if left != right { return left < right }
-            }
-            return abs($0.distance - target) < abs($1.distance - target)
-        }
-        // Present exactly two real candidates; never duplicate a route to fill a slot.
-        guard orderedCandidates.count >= 2 else {
-            candidates = []
-            matchCrosswalks()
-            message = serviceFailure.map { "코스 2개를 찾지 못했어요. \($0)" }
-                ?? "목표 거리 ±5%에 맞는 코스 2개를 찾지 못했어요. 출발지나 거리를 바꿔 주세요."
-            return
-        }
-        candidates = Array(orderedCandidates.prefix(2))
-        matchCrosswalks()
+        let counts = canCompareFacilities ? found.map {
+            $0.crosswalkMatches.filter { $0.crosswalk.signalPresence == "무" }.count
+        } : nil
+        let indices = RouteFallbackPolicy.indices(distances: found.map(\.distance), target: target,
+                                                   uncontrolledCounts: counts)
+        candidates = indices.map { found[$0] }
         if candidates.isEmpty {
-            message = serviceFailure ?? "목표 거리 ±5% 이내의 연결된 순환 코스를 찾지 못했습니다. 목표 거리나 출발 위치를 바꿔 주세요."
-        } else if let serviceFailure {
-            message = "일부 후보만 확인했습니다. \(serviceFailure)"
+            if let backup {
+                candidates = backup
+                message = "새 코스를 찾지 못해 같은 출발지에서 최근 찾은 코스를 보여드려요."
+            } else {
+                message = serviceFailure ?? "이 출발지에서 연결된 보행 코스를 찾지 못했어요. 가까운 도로나 공원 입구로 출발지를 옮겨 주세요."
+            }
+        } else {
+            savedSearch = SavedSearch(origin: origin, target: target, candidates: candidates, savedAt: .now)
+            let hasAlternative = candidates.contains { abs($0.distance - target) / target > 0.05 }
+            if hasAlternative {
+                message = "목표 거리와 가까운 대체 코스가 포함돼 있어요. 실제 거리를 확인해 주세요."
+            } else if candidates.count == 1 {
+                message = "지금 달릴 수 있는 코스 1개를 찾았어요."
+            } else if serviceFailure != nil {
+                message = "확인된 코스를 먼저 보여드려요."
+            }
         }
+        matchCrosswalks()
     }
 
     private func finish(_ id: UUID) {

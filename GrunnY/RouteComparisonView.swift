@@ -14,7 +14,7 @@ struct RouteComparisonView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("목표 거리 ±5% 안에서 예상 신호 대기가 가장 짧은 코스를 추천해요. 대기시간이 같으면 목표 거리에 더 가까운 코스를 골라요.")
+                    Text("목표 거리에 맞는 코스를 우선 찾고, 부족하면 가까운 거리의 대체 코스를 보여드려요. 추천 표시는 찾은 후보 중 예상 신호 대기가 가장 적은 코스예요.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

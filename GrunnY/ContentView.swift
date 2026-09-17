@@ -161,7 +161,7 @@ struct ContentView: View {
                     .aspectRatio(350.0 / 300.0, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
 
-                Text("설정한 거리와 페이스에 맞춰 찾은 코스예요.")
+                Text(planner.message ?? "설정한 거리와 페이스에 맞춰 찾은 코스예요.")
                     .font(.footnote)
                     .foregroundStyle(GrunnYStyle.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
