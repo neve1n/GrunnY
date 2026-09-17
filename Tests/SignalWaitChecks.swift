@@ -59,6 +59,24 @@ import Foundation
         precondition(SignalWaitEstimator.bestIndex(estimates:[inconsistent,shorterWait],distances:[1000,1100],target:1000) == nil)
         let missingFinish = SignalRouteEstimate(stops:[],totalWait:0,finish:nil,unavailableReason:nil)
         precondition(SignalWaitEstimator.bestIndex(estimates:[missingFinish],distances:[1000],target:1000) == nil)
-        print("Wait boundaries, wraparound, cumulative ETA, unknown propagation and ranking passed")
+        let cycle = StatisticalSignalCycle(red: 60, cycle: 90, validFrom: origin, validUntil: origin.addingTimeInterval(1000))
+        precondition(cycle.averageWait(at: origin) == 20)
+        precondition(cycle.averageWait(at: origin.addingTimeInterval(950)) == nil)
+        precondition(StatisticalSignalCycle(red: 90, cycle: 90, validFrom: origin, validUntil: origin.addingTimeInterval(1000)).averageWait(at: origin) == nil)
+        precondition(StatisticalSignalCycle(red: .nan, cycle: 90, validFrom: origin, validUntil: origin.addingTimeInterval(1000)).averageWait(at: origin) == nil)
+        let visits = [crossing("A-1",100,nil), crossing("A-2",200,nil)]
+        let average = SignalWaitEstimator.evaluateAverage(distance:1000,pace:300,departure:origin,
+            crossings:visits,cycles:["A-1":cycle,"A-2":cycle],coverageVerified:true)
+        precondition(average.method == .statisticalAverage && average.totalWait == 40)
+        precondition(average.stops[1].arrival == origin.addingTimeInterval(80))
+        let averageShorter = SignalWaitEstimator.evaluateAverage(distance:1010,pace:300,departure:origin,
+            crossings:[visits[0]],cycles:["A-1":cycle],coverageVerified:true)
+        precondition(SignalWaitEstimator.bestIndex(estimates:[average,averageShorter],distances:[1000,1010],target:1000) == 1)
+        precondition(SignalWaitEstimator.bestIndex(estimates:[average,shorterWait],distances:[1000,1100],target:1000) == nil)
+        precondition(SignalWaitEstimator.evaluateAverage(distance:1000,pace:300,departure:origin,
+            crossings:visits,cycles:["A-1":cycle],coverageVerified:true).totalWait == nil)
+        precondition(SignalWaitEstimator.evaluateAverage(distance:1000,pace:300,departure:origin,
+            crossings:visits,cycles:["A-1":cycle,"A-2":cycle],coverageVerified:false).totalWait == nil)
+        print("Arrival-time and statistical average waits, missing data, expiry and ranking passed")
     }
 }

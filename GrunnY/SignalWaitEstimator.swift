@@ -33,6 +33,7 @@ struct PedestrianTiming {
 }
 
 struct SignalRouteEstimate {
+    enum Method { case arrivalTime, statisticalAverage, cycleHeuristic }
     struct Stop: Identifiable {
         let id: String
         let arrival: Date?
@@ -43,9 +44,61 @@ struct SignalRouteEstimate {
     let totalWait: Double?
     let finish: Date?
     let unavailableReason: String?
+    var method: Method = .arrivalTime
+    var assumptionNote: String? = nil
+}
+
+/// One complete, fixed pedestrian cycle. `red` includes every interval during
+/// which a pedestrian cannot START crossing, including flashing clearance.
+/// A remaining-time observation must never be supplied as a full duration.
+struct StatisticalSignalCycle {
+    let red: Double
+    let cycle: Double
+    let validFrom: Date
+    let validUntil: Date
+
+    func averageWait(at arrival: Date) -> Double? {
+        guard red.isFinite, cycle.isFinite, cycle > 0, cycle <= 3600,
+              red >= 0, red < cycle,
+              validFrom.timeIntervalSince1970.isFinite, validUntil.timeIntervalSince1970.isFinite,
+              arrival.timeIntervalSince1970.isFinite,
+              validFrom <= arrival, arrival.addingTimeInterval(cycle) <= validUntil else { return nil }
+        return red * red / (2 * cycle)
+    }
 }
 
 enum SignalWaitEstimator {
+    /// Uniform arrival phase, not a prediction of the light at a specific time.
+    /// Each crossing ID represents one route visit; repeated visits count again.
+    static func evaluateAverage(distance: Double, pace: Int, departure: Date,
+                                crossings: [Crossing], cycles: [String: StatisticalSignalCycle],
+                                coverageVerified: Bool) -> SignalRouteEstimate {
+        var result = evaluate(distance: distance, pace: pace, departure: departure,
+                              crossings: crossings, coverageVerified: coverageVerified)
+        result.method = .statisticalAverage
+        guard coverageVerified, distance.isFinite, distance > 0, (180...900).contains(pace),
+              departure.timeIntervalSince1970.isFinite,
+              Set(crossings.map(\.id)).count == crossings.count,
+              crossings.allSatisfy({ $0.metersFromStart.isFinite && $0.metersFromStart >= 0 && $0.metersFromStart <= distance }) else { return result }
+        var total = 0.0
+        var missing = false
+        let stops: [SignalRouteEstimate.Stop] = crossings.sorted { $0.metersFromStart < $1.metersFromStart }.map { crossing in
+            guard !missing else {
+                return .init(id: crossing.id, arrival: nil, wait: nil, reason: "앞 신호의 평균 대기 미확인")
+            }
+            let arrival = departure.addingTimeInterval(crossing.metersFromStart / 1000 * Double(pace) + total)
+            guard let wait = cycles[crossing.id]?.averageWait(at: arrival) else {
+                missing = true
+                return .init(id: crossing.id, arrival: arrival, wait: nil, reason: "전체 보행신호 주기·진입 금지 시간 미확인")
+            }
+            total += wait
+            return .init(id: crossing.id, arrival: arrival, wait: wait, reason: nil)
+        }
+        return .init(stops: stops, totalWait: missing ? nil : total,
+                     finish: missing ? nil : departure.addingTimeInterval(distance / 1000 * Double(pace) + total),
+                     unavailableReason: missing ? "평균 대기를 계산할 수 없는 신호가 있습니다." : nil,
+                     method: .statisticalAverage)
+    }
     struct Crossing {
         let id: String
         let metersFromStart: Double
@@ -95,6 +148,7 @@ enum SignalWaitEstimator {
     /// Unknown routes are not zero-wait routes. Recommend only when every candidate is comparable.
     static func bestIndex(estimates: [SignalRouteEstimate], distances: [Double], target: Double) -> Int? {
         guard !estimates.isEmpty, estimates.count == distances.count, target.isFinite, target > 0,
+              estimates.allSatisfy({ $0.method == estimates.first?.method }),
               distances.allSatisfy({ $0.isFinite && $0 > 0 }),
               estimates.allSatisfy({ estimate in
                   guard estimate.unavailableReason == nil,

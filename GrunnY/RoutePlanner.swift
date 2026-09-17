@@ -197,14 +197,14 @@ final class RoutePlanner {
         calculatedDeparture = startTime
         isLoading = true
         defer { finish(id) }
-        var found: [LoopCandidate] = []
+        var foundLegs: [[MKRoute]] = []
         var serviceFailure: String?
         // 세 방향, 각 방향당 최대 한 번 거리 보정: 보행 요청은 최대 18회.
         search: for heading in 0..<3 {
             var radius = target / (2 + sqrt(2)) * 0.8
-            for attempt in 0..<2 {
+            for _ in 0..<2 {
                 guard requestID == id, !Task.isCancelled else { return }
-                progress = "순환 코스 \(heading + 1)/3 확인 중\(attempt == 1 ? " · 거리 보정" : "")"
+                progress = "1/3 · 순환 코스 탐색 중…"
                 let a = waypoint(from: origin.coordinate, meters: radius, bearing: Double(heading) * 120)
                 let b = waypoint(from: origin.coordinate, meters: radius, bearing: Double(heading) * 120 + 90)
                 let points = [origin.coordinate, a, b, origin.coordinate]
@@ -217,13 +217,14 @@ final class RoutePlanner {
                         legs.append(leg)
                         eta.addTimeInterval(leg.distance / 1_000 * Double(pace))
                     }
-                    let candidate = LoopCandidate(legs: legs)
-                    let difference = abs(candidate.distance - target) / target
-                    if difference <= 0.15, isConnectedLoop(legs, origin: origin.coordinate), hasLoopArea(legs, distance: candidate.distance) {
-                        found.append(candidate)
+                    let distance = legs.reduce(0) { $0 + $1.distance }
+                    let difference = abs(distance - target) / target
+                    if difference <= 0.05, isConnectedLoop(legs, origin: origin.coordinate), hasLoopArea(legs, distance: distance) {
+                        foundLegs.append(legs)
+                        if foundLegs.count == 2 { break search }
                         break
                     }
-                    radius *= min(1.5, max(0.5, target / candidate.distance))
+                    radius *= min(1.5, max(0.5, target / distance))
                 } catch {
                     guard requestID == id, !Task.isCancelled else { return }
                     if let mapError = error as? MKError, mapError.code == .directionsNotFound {
@@ -234,7 +235,20 @@ final class RoutePlanner {
                 }
             }
         }
-        guard requestID == id else { return }
+        guard requestID == id, !Task.isCancelled else { return }
+        if !foundLegs.isEmpty {
+            progress = "2/3 · 목표 거리 확인 중…"
+            guard requestID == id, !Task.isCancelled else { return }
+            foundLegs = foundLegs.filter { legs in
+                let distance = legs.reduce(0) { $0 + $1.distance }
+                return abs(distance - target) / target <= 0.05
+            }
+            progress = crosswalkDataAvailable
+                ? "3/3 · 횡단보도·신호등 정보 확인 중…"
+                : "3/3 · 코스 정리 중…"
+            guard requestID == id, !Task.isCancelled else { return }
+        }
+        let found = foundLegs.map { LoopCandidate(legs: $0) }
         // Compare observed facilities only when every route has interpretable matches.
         // Empty/missing coverage must never win by being counted as zero hazards.
         let canCompareFacilities = found.allSatisfy {
@@ -242,7 +256,7 @@ final class RoutePlanner {
                 ["유", "무"].contains($0.crosswalk.signalPresence)
             }
         }
-        candidates = found.sorted {
+        let orderedCandidates = found.sorted {
             if canCompareFacilities {
                 let left = $0.crosswalkMatches.filter { $0.crosswalk.signalPresence == "무" }.count
                 let right = $1.crosswalkMatches.filter { $0.crosswalk.signalPresence == "무" }.count
@@ -250,9 +264,18 @@ final class RoutePlanner {
             }
             return abs($0.distance - target) < abs($1.distance - target)
         }
+        // Present exactly two real candidates; never duplicate a route to fill a slot.
+        guard orderedCandidates.count >= 2 else {
+            candidates = []
+            matchCrosswalks()
+            message = serviceFailure.map { "코스 2개를 찾지 못했어요. \($0)" }
+                ?? "목표 거리 ±5%에 맞는 코스 2개를 찾지 못했어요. 출발지나 거리를 바꿔 주세요."
+            return
+        }
+        candidates = Array(orderedCandidates.prefix(2))
         matchCrosswalks()
         if candidates.isEmpty {
-            message = serviceFailure ?? "목표 거리 ±15% 이내의 연결된 순환 코스를 찾지 못했습니다. 목표 거리나 출발 위치를 바꿔 주세요."
+            message = serviceFailure ?? "목표 거리 ±5% 이내의 연결된 순환 코스를 찾지 못했습니다. 목표 거리나 출발 위치를 바꿔 주세요."
         } else if let serviceFailure {
             message = "일부 후보만 확인했습니다. \(serviceFailure)"
         }

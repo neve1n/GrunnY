@@ -27,11 +27,15 @@ struct SignalObservationView: View {
             LabeledContent("\(observation.direction.label) 진입 기준 보행신호", value: observation.state ?? "상태 없음")
             if let seconds = observation.remainingSeconds {
                 LabeledContent("관측 당시 잔여시간", value: "\(seconds.formatted(.number.precision(.fractionLength(1))))초")
+                if let observedAt = row.observedAt {
+                    LabeledContent("관측 기준 상태 전환 예정", value: observedAt.addingTimeInterval(seconds)
+                        .formatted(date: .omitted, time: .standard))
+                }
             } else {
                 LabeledContent("잔여시간", value: "해석 불가 / 없음")
             }
         }
-        Text("관측값이며 현재 통행 가능 여부나 미래 신호를 보장하지 않습니다.")
+        Text("전환 예정 시각은 관측 시각+잔여시간입니다. 다음 상태가 보행 초록불이라는 뜻은 아니며, 다음 주기의 시작으로 반복 적용하지 않습니다.")
             .font(.caption).foregroundStyle(.secondary)
     }
 }

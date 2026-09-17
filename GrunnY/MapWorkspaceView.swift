@@ -193,7 +193,7 @@ struct MapWorkspaceView: View {
                                     pace: paceSecondsPerKM, departure: routePlanner.calculatedDeparture ?? .now,
                                     selectedIndex: routePlanner.selectedIndex, canSelect: !location.isRunning,
                                     target: targetDistanceKM * 1000,
-                                    select: { routePlanner.selectCandidate($0); showEntireRoute() }, plans: $signalPlans, signalRows: $signalRows)
+                                    select: { routePlanner.selectCandidate($0); showEntireRoute() })
             }
             .sheet(isPresented: $showsCrosswalks) {
                 CrosswalkListView(matches: routePlanner.crosswalkMatches,

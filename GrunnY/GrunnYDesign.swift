@@ -41,14 +41,12 @@ struct CourseLoadingRing: View {
 
 struct GrunnYPrimaryLabel: View {
     let title: String
-    var trailingAligned = false
     var body: some View {
-        HStack(spacing: 14) {
-            Spacer(minLength: 0)
-            Text(title).font(.headline)
-            Image("Design-arrow").resizable().frame(width: 20, height: 20).accessibilityHidden(true)
-            if !trailingAligned { Spacer(minLength: 0) }
-        }.padding(.trailing, trailingAligned ? 26 : 0).foregroundStyle(.white).frame(minHeight: 56)
+        Text(title).font(.headline)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 24).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .foregroundStyle(.white)
             .background(GrunnYStyle.gradient, in: RoundedRectangle(cornerRadius: 16))
             .contentShape(RoundedRectangle(cornerRadius: 16))
     }
@@ -126,9 +124,7 @@ struct DesignedRunSession: View {
                         .background(GrunnYStyle.background)
                 }
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Text("GrunnY").font(.title3.bold()).foregroundStyle(GrunnYStyle.brand).fixedSize() }.sharedBackgroundVisibility(.hidden)
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showsMap) {
                 NavigationStack {
