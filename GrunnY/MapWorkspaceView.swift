@@ -135,7 +135,7 @@ struct MapWorkspaceView: View {
                         }
                     }
                     if location.isRunning {
-                        Button("러닝 종료", role: .destructive, action: location.endRun)
+                        Button("러닝 종료", role: .destructive) { location.endRun() }
                             .buttonStyle(.borderedProminent)
                             .frame(minHeight: 44)
                     } else {
@@ -154,7 +154,12 @@ struct MapWorkspaceView: View {
                         }
                         .buttonStyle(.bordered)
                         .disabled(routePlanner.isLoading || !location.canStartRun)
-                        Button(action: location.startRun) {
+                        Button {
+                            location.prepareRun(routes: routePlanner.displayedLegs,
+                                targetDistance: routePlanner.targetMeters, targetPace: paceSecondsPerKM,
+                                estimatedWait: routePlanner.selectedSignalEstimate?.totalWait)
+                            location.startRun()
+                        } label: {
                             Text(location.startedAt == nil ? "러닝 시작" : "새 러닝 시작")
                                 .frame(maxWidth: .infinity, minHeight: 44)
                         }

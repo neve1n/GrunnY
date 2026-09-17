@@ -25,13 +25,16 @@ struct RunCountdownView: View {
         .statusBarHidden()
         .interactiveDismissDisabled()
         .accessibilityLabel(step == 3 ? "러닝 시작" : "러닝 시작까지 \(labels[step])")
-        .accessibilityAction(.escape, cancel)
+        .accessibilityAction(.escape) { RunVoice.shared.stop(); cancel() }
         .task {
+            RunVoice.shared.stop()
+            RunVoice.shared.say("3", priority: .event)
             do {
                 for next in 1...3 {
                     try await Task.sleep(for: .seconds(1))
                     guard !interrupted, scenePhase == .active else { return }
                     withAnimation(.easeInOut(duration: 0.25)) { step = next }
+                    RunVoice.shared.say(next == 3 ? "러닝을 시작할게요." : labels[next], priority: .event)
                 }
                 try await Task.sleep(for: .milliseconds(600))
                 guard !interrupted, scenePhase == .active else { return }
@@ -43,6 +46,7 @@ struct RunCountdownView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 interrupted = true
+                RunVoice.shared.stop()
                 cancel()
             }
         }
@@ -77,6 +81,9 @@ struct RunSessionFlow: View {
         Group {
             if countingDown {
                 RunCountdownView {
+                    location.prepareRun(routes: planner.displayedLegs,
+                        targetDistance: planner.targetMeters, targetPace: targetPace,
+                        estimatedWait: planner.selectedSignalEstimate?.totalWait)
                     location.startRun()
                     guard location.isRunning else { cancel(); return }
                     countingDown = false

@@ -1,4 +1,5 @@
 import CoreLocation
+import MapKit
 import Observation
 
 @MainActor
@@ -14,6 +15,31 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
     private(set) var startedAt: Date?
     private(set) var endedAt: Date?
     private(set) var distance: CLLocationDistance = 0
+    let guidance = RunGuidance()
+    private var announcements = RunAnnouncements()
+    private var targetDistance: Double?
+    private var targetPace: Int?
+    private var plannedDistance: Double?
+    private var plannedDuration: Double?
+    private var runID = UUID()
+    private(set) var saveError: String?
+    private var completedRecord: RunRecord?
+
+    func prepareRun(routes: [MKRoute], targetDistance: Double?, targetPace: Int, estimatedWait: Double?) {
+        guidance.configure(routes: routes)
+        guidance.emit = { text in
+            let event = text.contains("코스에서") || text.contains("코스로 돌아왔어요") || text.contains("경로 안내를 종료")
+            RunVoice.shared.say(text, priority: event ? .event : .direction)
+        }
+        guidance.cancelDirections = { RunVoice.shared.cancelDirections() }
+        self.targetDistance = targetDistance
+        self.targetPace = targetPace
+        let meters = routes.reduce(0) { $0 + $1.distance }
+        plannedDistance = meters.isFinite && meters > 0 ? meters : nil
+        if let estimatedWait, estimatedWait.isFinite, estimatedWait >= 0, let plannedDistance {
+            plannedDuration = plannedDistance / 1000 * Double(targetPace) + estimatedWait
+        } else { plannedDuration = nil }
+    }
 
     var isDenied: Bool { authorization == .denied }
     var isRestricted: Bool { authorization == .restricted }
@@ -47,13 +73,15 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
     func startRun() {
         guard canStartRun else { return }
         manager.stopUpdatingLocation()
+        announcements = RunAnnouncements()
+        runID = UUID(); saveError = nil; completedRecord = nil
         runLocations.removeAll()
         distance = 0
         startedAt = Date()
         endedAt = nil
         isRunning = true
         isLocating = false
-        manager.distanceFilter = 5
+        manager.distanceFilter = kCLDistanceFilterNone
         manager.pausesLocationUpdatesAutomatically = false
         manager.allowsBackgroundLocationUpdates = true
         manager.showsBackgroundLocationIndicator = true
@@ -61,15 +89,47 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
         manager.startUpdatingLocation()
     }
 
-    func endRun() {
-        guard isRunning else { return }
+    enum FinishReason: String { case manual, arrival, interrupted }
+
+    func endRun(reason: FinishReason = .manual) {
+        guard isRunning, let startedAt else { return }
         isRunning = false
-        endedAt = Date()
+        let ended = Date()
+        endedAt = ended
         manager.stopUpdatingLocation()
         manager.allowsBackgroundLocationUpdates = false
         manager.distanceFilter = kCLDistanceFilterNone
         isLocating = false
+        let latest = runLocations.last
+        let freshArrival = latest.map {
+            $0.horizontalAccuracy >= 0 && $0.horizontalAccuracy <= 35
+                && abs(ended.timeIntervalSince($0.timestamp)) <= 15
+        } ?? false
+        let evidence = RunCompletionEvidence(gpsArrived: reason == .arrival && guidance.arrived && freshArrival,
+            actualDistance: distance, actualDuration: max(0, ended.timeIntervalSince(startedAt)),
+            plannedDistance: plannedDistance, plannedDuration: plannedDuration,
+            distanceTolerance: 0.05, timeTolerance: 0.10)
+        completedRecord = RunRecord(id: runID, startedAt: startedAt, endedAt: ended,
+            distance: distance, targetDistance: targetDistance, targetPace: targetPace,
+            finishReason: reason.rawValue, missionComplete: reason == .arrival && evidence.missionComplete,
+            points: runLocations.map { .init(latitude: $0.coordinate.latitude,
+                longitude: $0.coordinate.longitude, timestamp: $0.timestamp) })
+        saveCompletedRun()
+        RunVoice.shared.stop()
+        switch reason {
+        case .manual:
+            RunVoice.shared.say(saveError == nil ? "러닝을 종료했어요. 지금까지의 기록을 저장할게요."
+                : "러닝을 종료했어요. 기록을 저장하지 못했어요. 화면을 확인해 주세요.", priority: .event)
+        case .arrival: RunVoice.shared.say(evidence.announcement, priority: .event)
+        case .interrupted: RunVoice.shared.say("위치 정보를 확인할 수 없어 러닝을 중단했어요.", priority: .event)
+        }
         message = "러닝을 종료했습니다."
+    }
+
+    func saveCompletedRun() {
+        guard let completedRecord else { return }
+        do { try completedRecord.save(); saveError = nil }
+        catch { saveError = "기록을 저장하지 못했어요. 다시 시도해 주세요." }
     }
 
     func elapsedTime(at date: Date) -> TimeInterval {
@@ -87,7 +147,7 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
             message = "현재 위치를 확인하고 있습니다."
             manager.requestLocation()
         case .denied, .restricted:
-            endRun()
+            endRun(reason: .interrupted)
             currentLocation = nil
             showPermissionStatus()
         default:
@@ -104,11 +164,22 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
                       abs(point.timestamp.timeIntervalSinceNow) < 30 else { continue }
                 if let previous = runLocations.last {
                     guard point.timestamp > previous.timestamp else { continue }
-                    distance += point.distance(from: previous)
+                    let delta = point.distance(from: previous)
+                    let seconds = point.timestamp.timeIntervalSince(previous.timestamp)
+                    // Reject GPS jumps rather than inventing kilometre splits/arrival.
+                    guard seconds > 0, delta / seconds <= 10 else { continue }
+                    distance += delta
                 }
                 runLocations.append(point)
                 currentLocation = point
+                guidance.update(location: point, now: .now, traveled: distance)
+                let lines = announcements.update(distance: distance,
+                    elapsed: max(0, point.timestamp.timeIntervalSince(startedAt)),
+                    target: targetDistance, arrived: guidance.arrived)
+                if guidance.arrived { endRun(reason: .arrival); break }
+                for line in lines { RunVoice.shared.say(line, priority: .record, lifetime: 90) }
             }
+            guard isRunning else { return }
             message = runLocations.isEmpty
                 ? "러닝 중 · 정확한 GPS 위치를 기다리고 있습니다."
                 : "러닝 중 · 이동 경로를 기록하고 있습니다."
@@ -131,14 +202,14 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         isLocating = false
         if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
-            endRun()
+            endRun(reason: .interrupted)
             authorization = manager.authorizationStatus
             showPermissionStatus()
         } else if isRunning, (error as? CLError)?.code == .locationUnknown {
             message = "GPS 신호가 약합니다. 위치 수신을 기다리고 있습니다."
         } else {
             let wasRunning = isRunning
-            endRun()
+            endRun(reason: .interrupted)
             message = "위치를 확인할 수 없습니다. 기기의 위치 서비스를 확인한 뒤 다시 시도해 주세요."
             if wasRunning { message = "위치 오류로 러닝 기록을 중단했습니다. 위치 서비스를 확인해 주세요." }
         }

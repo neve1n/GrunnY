@@ -89,6 +89,7 @@ struct DesignedRunSession: View {
     let done: () -> Void
     @State private var showsMap = false
     @State private var confirmsFinish = false
+    private var guidance: RunGuidance { location.guidance }
     var body: some View {
         NavigationStack {
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -139,20 +140,21 @@ struct DesignedRunSession: View {
         .overlay {
             if confirmsFinish {
                 ZStack {
-                    Color.black.opacity(0.18).ignoresSafeArea()
+                    Color.black.opacity(0.42).ignoresSafeArea()
                     VStack(alignment: .leading, spacing: 0) {
                         Text("러닝을 종료할까요?")
                             .font(.system(size: 24, weight: .bold))
                             .accessibilityAddTraits(.isHeader)
-                        Text("종료하면 지금까지의 러닝 기록을\n확인할 수 있어요.")
+                        Text("종료한 뒤에는 러닝을 이어갈 수 없어요.")
                             .font(.system(size: 14))
                             .foregroundStyle(GrunnYStyle.secondary)
-                            .lineSpacing(6).padding(.top, 16)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 14)
                         Button { confirmsFinish = false } label: {
                             Text("계속 달리기").font(.system(size: 18, weight: .bold))
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity, minHeight: 56)
-                                .background(GrunnYStyle.gradient, in: RoundedRectangle(cornerRadius: 16))
+                                .background(GrunnYStyle.teal, in: RoundedRectangle(cornerRadius: 16))
                         }.buttonStyle(.plain).padding(.top, 26)
                         Button(role: .destructive) {
                             confirmsFinish = false
@@ -164,8 +166,10 @@ struct DesignedRunSession: View {
                                 .background(GrunnYStyle.soft, in: RoundedRectangle(cornerRadius: 16))
                         }.buttonStyle(.plain).padding(.top, 16)
                     }
-                    .padding(24)
-                    .frame(maxWidth: 350, minHeight: 300, alignment: .topLeading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 52)
+                    .padding(.bottom, 38)
+                    .frame(maxWidth: 350, alignment: .leading)
                     .background(GrunnYStyle.background, in: RoundedRectangle(cornerRadius: 24))
                     .shadow(color: Color(red: 0.02, green: 0.08, blue: 0.07).opacity(0.18), radius: 32, y: 12)
                     .padding(.horizontal, 20)
@@ -209,18 +213,18 @@ struct DesignedRunSession: View {
             Button { showsMap = true } label: {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("달리는 경로")
+                        Text("다음 안내")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(GrunnYStyle.brand)
-                        Text("지도에서 코스 확인")
+                        Text(guidance.title)
                             .font(.system(size: 24, weight: .bold))
-                            .minimumScaleFactor(0.7).lineLimit(1)
-                        Text("선택한 코스와 현재 위치를 확인해요")
+                            .minimumScaleFactor(0.7).lineLimit(2)
+                        Text(guidance.subtitle)
                             .font(.system(size: 12))
                             .foregroundStyle(GrunnYStyle.secondary)
                     }
                     Spacer(minLength: 0)
-                    Image(systemName: "map")
+                    Image(systemName: guidance.symbol)
                         .font(.system(size: 22, weight: .medium))
                         .foregroundStyle(.white)
                         .frame(width: 44, height: 44)
@@ -251,8 +255,11 @@ struct DesignedRunSession: View {
 
     private func complete(at now: Date) -> some View {
         VStack(alignment: .leading, spacing: 24) {
+            if let saveError = location.saveError {
+                Text(saveError).font(.footnote).foregroundStyle(.red)
+                Button("저장 다시 시도") { location.saveCompletedRun() }
+            }
             VStack(alignment: .leading, spacing: 12) {
-                Text("오늘의 러닝").font(.subheadline).foregroundStyle(GrunnYStyle.brand)
                 Text("오늘의 흐름을\n완성했어요").font(.system(.title, weight: .bold))
                 HStack(alignment: .firstTextBaseline, spacing: 20) {
                     Text(String(format: "%.2f", location.distance / 1000)).font(.system(size: 58, weight: .bold)).monospacedDigit()
@@ -263,6 +270,8 @@ struct DesignedRunSession: View {
                 stat("평균 페이스", value: averagePace(at: now))
                 Rectangle().fill(GrunnYStyle.border).frame(width: 1, height: 56)
                 stat("시간", value: GrunnYStyle.elapsed(location.elapsedTime(at: now)))
+                Rectangle().fill(GrunnYStyle.border).frame(width: 1, height: 56)
+                stat("신호등 개수", value: courseSignalCount.map { String($0) } ?? "—")
             }.padding(20).background(GrunnYStyle.soft, in: RoundedRectangle(cornerRadius: 16))
             VStack(alignment: .leading, spacing: 20) {
                 Text("페이스 흐름").font(.subheadline).foregroundStyle(GrunnYStyle.brand)
@@ -278,6 +287,14 @@ struct DesignedRunSession: View {
                 }
             }.padding(20).background(GrunnYStyle.soft, in: RoundedRectangle(cornerRadius: 16))
         }.padding(20)
+    }
+
+    // Same unique, signal-equipped crossing count shown for the selected course.
+    // This is a course statistic, not a claim that every crossing was traversed.
+    private var courseSignalCount: Int? {
+        guard planner.crosswalkDataAvailable, !planner.crosswalkMatches.isEmpty else { return nil }
+        return Set(planner.crosswalkMatches.filter { $0.crosswalk.signalPresence == "유" }
+            .map { $0.crosswalk.id }).count
     }
 
     private func stat(_ label: String, value: String) -> some View {
