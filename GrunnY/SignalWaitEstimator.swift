@@ -60,6 +60,14 @@ enum SignalWaitEstimator {
               crossings.allSatisfy({ $0.metersFromStart.isFinite && $0.metersFromStart >= 0 && $0.metersFromStart <= distance }) else {
             return .init(stops: [], totalWait: nil, finish: nil, unavailableReason: "경로 거리·페이스·시각이 유효하지 않습니다.")
         }
+        // Missing crossings can add unknown waits before even the first known stop.
+        // Do not publish local ETAs or waits until route coverage is established.
+        guard coverageVerified else {
+            let reason = "실제 횡단 구간과 신호 데이터의 전체 범위가 검증되지 않았습니다."
+            return .init(stops: crossings.sorted { $0.metersFromStart < $1.metersFromStart }.map {
+                .init(id: $0.id, arrival: nil, wait: nil, reason: $0.unavailableReason ?? reason)
+            }, totalWait: nil, finish: nil, unavailableReason: reason)
+        }
         var accumulated = 0.0
         var unknown = false
         var stops: [SignalRouteEstimate.Stop] = []
@@ -88,7 +96,16 @@ enum SignalWaitEstimator {
     static func bestIndex(estimates: [SignalRouteEstimate], distances: [Double], target: Double) -> Int? {
         guard !estimates.isEmpty, estimates.count == distances.count, target.isFinite, target > 0,
               distances.allSatisfy({ $0.isFinite && $0 > 0 }),
-              estimates.allSatisfy({ $0.totalWait != nil && $0.totalWait!.isFinite && $0.totalWait! >= 0 }) else { return nil }
+              estimates.allSatisfy({ estimate in
+                  guard estimate.unavailableReason == nil,
+                        let finish = estimate.finish, finish.timeIntervalSince1970.isFinite,
+                        let total = estimate.totalWait, total.isFinite, total >= 0,
+                        estimate.stops.allSatisfy({ stop in
+                            guard let arrival = stop.arrival, let wait = stop.wait else { return false }
+                            return arrival.timeIntervalSince1970.isFinite && wait.isFinite && wait >= 0 && stop.reason == nil
+                        }) else { return false }
+                  return abs(estimate.stops.reduce(0) { $0 + ($1.wait ?? 0) } - total) < 0.001
+              }) else { return nil }
         return estimates.indices.min {
             let left = estimates[$0].totalWait!, right = estimates[$1].totalWait!
             return left == right ? abs(distances[$0] - target) < abs(distances[$1] - target) : left < right

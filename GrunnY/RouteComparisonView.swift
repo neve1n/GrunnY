@@ -9,6 +9,9 @@ struct RouteComparisonView: View {
     let target: Double
     let select: (Int) -> Void
     @Binding var plans: SeoulPlanCollection?
+    @Binding var signalRows: [SeoulSignalRow]
+    @State private var inspectedMatches: [CrosswalkMatch] = []
+    @State private var showsCrosswalks = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -32,12 +35,19 @@ struct RouteComparisonView: View {
                     Section("코스 \(index + 1)\(index == selectedIndex ? " · 선택됨" : "")") {
                         LabeledContent("거리", value: "\((assessment.distance / 1000).formatted(.number.precision(.fractionLength(2)))) km")
                         LabeledContent("러닝 시간 (대기 제외)", value: duration(assessment.distance / 1000 * Double(pace)))
+                        LabeledContent("신호등 미설치 근접 후보", value: "\(assessment.matches.filter { $0.crosswalk.signalPresence == "무" }.count)회 · 실제 횡단 미확인")
                         LabeledContent("예상 신호 대기", value: assessment.estimate.totalWait.map(duration) ?? "계산 보류")
                         if let reason = assessment.estimate.unavailableReason {
                             Text(reason).font(.subheadline).foregroundStyle(.secondary)
                         }
                         if assessment.matches.isEmpty {
                             Text("횡단보도 후보가 없습니다. 자료 미포함 지역 또는 누락 가능성이 있어 신호 없는 코스로 판정하지 않습니다.")
+                        }
+                        if !assessment.matches.isEmpty {
+                            Button("횡단보도·실시간 신호 자료 확인") {
+                                inspectedMatches = assessment.matches
+                                showsCrosswalks = true
+                            }
                         }
                         ForEach(Array(assessment.matches.enumerated()), id: \.element.id) { number, match in
                             DisclosureGroup("\(number + 1). \(match.crosswalk.name.isEmpty ? "횡단보도 후보" : match.crosswalk.name)") {
@@ -53,13 +63,17 @@ struct RouteComparisonView: View {
                     }
                 }
                 Section {
-                    Text("모든 후보의 횡단 구간과 신호계획이 검증되어야 총 대기시간으로 추천할 수 있습니다. 현재 기본 선택은 목표 거리 기준입니다.")
+                    Text("모든 후보의 횡단 구간과 신호계획이 검증되어야 총 대기시간으로 추천할 수 있습니다. 현재 선택은 자료를 비교할 수 있으면 신호등 미설치 횡단보도 근접 횟수를 우선하고, 그다음 목표 거리 차이를 비교합니다. 근접은 실제 횡단을 뜻하지 않습니다.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("코스별 신호 분석")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("완료") { dismiss() } } }
+            .sheet(isPresented: $showsCrosswalks) {
+                CrosswalkListView(matches: inspectedMatches, dataAvailable: CrosswalkCatalog.bundled != nil,
+                                  pace: pace, signalRows: $signalRows)
+            }
         }
     }
 

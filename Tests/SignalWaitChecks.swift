@@ -35,6 +35,11 @@ import Foundation
         precondition(unknown.totalWait == nil && unknown.finish == nil && unknown.stops[1].arrival == nil)
         let emptyUnknown = SignalWaitEstimator.evaluate(distance:1000,pace:300,departure:origin,crossings:[],coverageVerified:false)
         precondition(emptyUnknown.totalWait == nil) // zero candidates is not zero signals
+        let incompleteCoverage = SignalWaitEstimator.evaluate(distance:1000,pace:300,departure:origin,
+            crossings:[crossing("A",100,signal)],coverageVerified:false)
+        precondition(incompleteCoverage.stops.count == 1)
+        precondition(incompleteCoverage.stops[0].arrival == nil && incompleteCoverage.stops[0].wait == nil)
+        precondition(incompleteCoverage.totalWait == nil && incompleteCoverage.finish == nil)
         let emptyKnown = SignalWaitEstimator.evaluate(distance:1000,pace:300,departure:origin,crossings:[],coverageVerified:true)
         precondition(emptyKnown.totalWait == 0)
         let badDistance = SignalWaitEstimator.evaluate(distance:100,pace:300,departure:origin,crossings:[crossing("A",101,signal)],coverageVerified:true)
@@ -44,6 +49,16 @@ import Foundation
         precondition(SignalWaitEstimator.bestIndex(estimates:[result,unknown],distances:[1000,1000],target:1000) == nil)
         precondition(SignalWaitEstimator.bestIndex(estimates:[result,emptyKnown],distances:[1000,1010],target:1000) == 1)
         precondition(SignalWaitEstimator.bestIndex(estimates:[emptyKnown,emptyKnown],distances:[1100,1001],target:1000) == 1)
+        // The more distant candidate must win if its actual computed wait is lower.
+        let shorterWait = SignalWaitEstimator.evaluate(distance:1100,pace:300,departure:origin,
+            crossings:[crossing("C",100,timing(40,50))],coverageVerified:true)
+        precondition(shorterWait.totalWait == 10)
+        precondition(SignalWaitEstimator.bestIndex(estimates:[result,shorterWait],distances:[1000,1100],target:1000) == 1)
+        // A partial/error result cannot be presented as a zero-wait recommendation.
+        let inconsistent = SignalRouteEstimate(stops:result.stops,totalWait:0,finish:result.finish,unavailableReason:nil)
+        precondition(SignalWaitEstimator.bestIndex(estimates:[inconsistent,shorterWait],distances:[1000,1100],target:1000) == nil)
+        let missingFinish = SignalRouteEstimate(stops:[],totalWait:0,finish:nil,unavailableReason:nil)
+        precondition(SignalWaitEstimator.bestIndex(estimates:[missingFinish],distances:[1000],target:1000) == nil)
         print("Wait boundaries, wraparound, cumulative ETA, unknown propagation and ranking passed")
     }
 }

@@ -29,6 +29,34 @@ final class RoutePlanner {
     private var directions: MKDirections?
     private var requestID = UUID()
     private(set) var calculatedDeparture: Date?
+    private(set) var recommendedSignalRouteID: UUID?
+    private(set) var routeSignalEstimates: [UUID: SignalRouteEstimate] = [:]
+
+    var selectedSignalEstimate: SignalRouteEstimate? {
+        guard let id = selectedLoop?.id else { return nil }
+        return routeSignalEstimates[id]
+    }
+
+    /// Recompute and actually select the minimum-wait candidate. Unknown coverage
+    /// never participates as a zero-wait route. Inputs must belong to this search.
+    func applySignalAssessments(_ assessments: [RouteSignalAssessment]) {
+        recommendedSignalRouteID = nil
+        routeSignalEstimates = [:]
+        guard !isLoading, !candidates.isEmpty,
+              assessments.count == candidates.count,
+              Set(assessments.map(\.id)).count == assessments.count,
+              Set(assessments.map(\.id)) == Set(candidates.map(\.id)) else { return }
+        let ordered = candidates.compactMap { candidate in
+            assessments.first { $0.id == candidate.id && $0.distance == candidate.distance }
+        }
+        guard ordered.count == candidates.count else { return }
+        routeSignalEstimates = Dictionary(uniqueKeysWithValues: ordered.map { ($0.id, $0.estimate) })
+        guard let targetMeters,
+              let index = SignalWaitEstimator.bestIndex(estimates: ordered.map(\.estimate),
+                                                        distances: ordered.map(\.distance), target: targetMeters) else { return }
+        recommendedSignalRouteID = candidates[index].id
+        selectCandidate(index)
+    }
 
     var selectedLoop: LoopCandidate? { candidates.indices.contains(selectedIndex) ? candidates[selectedIndex] : nil }
     var displayedLegs: [MKRoute] { selectedLoop?.legs ?? route.map { [$0] } ?? [] }
@@ -55,14 +83,14 @@ final class RoutePlanner {
         return CrosswalkMatcher.matches(paths: paths, crosswalks: CrosswalkCatalog.bundled?.crosswalks ?? [])
     }
 
-    func signalAssessments(pace: Int, plans: SeoulPlanCollection?) -> [RouteSignalAssessment] {
+    func signalAssessments(pace: Int, plans: SeoulPlanCollection?, signalRows: [SeoulSignalRow] = []) -> [RouteSignalAssessment] {
         guard let departure = calculatedDeparture else { return [] }
         if !candidates.isEmpty {
             return candidates.map { .make(id: $0.id, distance: $0.distance, matches: $0.crosswalkMatches,
-                                         pace: pace, departure: departure, plans: plans) }
+                                         pace: pace, departure: departure, plans: plans, signalRows: signalRows) }
         }
         guard route != nil else { return [] }
-        return [.make(id: requestID, distance: distance, matches: crosswalkMatches, pace: pace, departure: departure, plans: plans)]
+        return [.make(id: requestID, distance: distance, matches: crosswalkMatches, pace: pace, departure: departure, plans: plans, signalRows: signalRows)]
     }
 
     func clear() {
@@ -78,6 +106,8 @@ final class RoutePlanner {
         destination = nil
         message = nil
         calculatedDeparture = nil
+        recommendedSignalRouteID = nil
+        routeSignalEstimates = [:]
     }
 
     private func validate(_ origin: CLLocation?, departure: Date?) -> CLLocation? {
@@ -135,9 +165,26 @@ final class RoutePlanner {
         }
     }
 
-    func findLoops(from origin: CLLocation?, targetKM: Double, pace: Int, departure: Date?) async {
+    func findLoops(from origin: CLLocation?, targetKM: Double, pace: Int, departure: Date?,
+                   selectedStart: CLLocationCoordinate2D? = nil) async {
         clear()
-        guard let origin = validate(origin, departure: departure) else { return }
+        let startLocation: CLLocation?
+        if let selectedStart {
+            guard CLLocationCoordinate2DIsValid(selectedStart) else {
+                message = "선택한 출발지 좌표가 유효하지 않습니다."
+                return
+            }
+            if let departure, departure <= Date() {
+                message = "출발 시각이 지났습니다. 미래 시각을 선택해 주세요."
+                return
+            }
+            // This is a chosen map point, not a device GPS measurement. A fixed
+            // planning origin remains valid even when location access is denied.
+            startLocation = CLLocation(latitude: selectedStart.latitude, longitude: selectedStart.longitude)
+        } else {
+            startLocation = validate(origin, departure: departure)
+        }
+        guard let origin = startLocation else { return }
         guard targetKM.isFinite, (0.5...42).contains(targetKM), (180...900).contains(pace) else {
             message = "코스 조건의 거리와 페이스를 확인해 주세요."
             return
@@ -188,7 +235,21 @@ final class RoutePlanner {
             }
         }
         guard requestID == id else { return }
-        candidates = found.sorted { abs($0.distance - target) < abs($1.distance - target) }
+        // Compare observed facilities only when every route has interpretable matches.
+        // Empty/missing coverage must never win by being counted as zero hazards.
+        let canCompareFacilities = found.allSatisfy {
+            !$0.crosswalkMatches.isEmpty && $0.crosswalkMatches.allSatisfy {
+                ["유", "무"].contains($0.crosswalk.signalPresence)
+            }
+        }
+        candidates = found.sorted {
+            if canCompareFacilities {
+                let left = $0.crosswalkMatches.filter { $0.crosswalk.signalPresence == "무" }.count
+                let right = $1.crosswalkMatches.filter { $0.crosswalk.signalPresence == "무" }.count
+                if left != right { return left < right }
+            }
+            return abs($0.distance - target) < abs($1.distance - target)
+        }
         matchCrosswalks()
         if candidates.isEmpty {
             message = serviceFailure ?? "목표 거리 ±15% 이내의 연결된 순환 코스를 찾지 못했습니다. 목표 거리나 출발 위치를 바꿔 주세요."

@@ -16,16 +16,25 @@ struct ContentView: View {
     @State private var showsSession = false
     @State private var showsAnalysis = false
     @State private var searchTask: Task<Void, Never>?
+    @State private var selectedStart: RunStartPoint?
+    @State private var showsGoal = false
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         NavigationStack {
-            Group {
-                if planner.isLoading { loading }
-                else { goal }
+            StartLocationView(location: location, selection: $selectedStart) {
+                planner.clear()
+                showsGoal = true
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(isPresented: $showsRoute) { routeScreen }
+            .navigationDestination(isPresented: $showsGoal) {
+                Group {
+                    if planner.isLoading { loading }
+                    else { goal }
+                }
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(isPresented: $showsRoute) { routeScreen }
+            }
         }
         .tint(GrunnYStyle.brand)
         .foregroundStyle(GrunnYStyle.primary)
@@ -37,15 +46,17 @@ struct ContentView: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("완료") { showsTools = false } } }
             }
         }
-        .sheet(isPresented: $showsAnalysis) {
-            RouteComparisonView(assessments: planner.signalAssessments(pace: pace, plans: plans), pace: pace,
+        .sheet(isPresented: $showsAnalysis, onDismiss: refreshSignalRecommendation) {
+            RouteComparisonView(assessments: planner.signalAssessments(pace: pace, plans: plans, signalRows: signalRows), pace: pace,
                                 departure: planner.calculatedDeparture ?? .now, selectedIndex: planner.selectedIndex,
                                 canSelect: !location.isRunning, target: targetKM * 1000,
-                                select: { planner.selectCandidate($0) }, plans: $plans)
+                                select: { planner.selectCandidate($0) }, plans: $plans, signalRows: $signalRows)
         }
         .fullScreenCover(isPresented: $showsSession) {
             DesignedRunSession(location: location, planner: planner, targetPace: pace) {
                 showsRoute = false
+                showsGoal = false
+                selectedStart = nil
                 showsSession = false
             }
                 .preferredColorScheme(.light)
@@ -55,7 +66,6 @@ struct ContentView: View {
                 if showsTools { showsTools = false } else { showsSession = true }
             }
         }
-        .task { location.requestCurrentLocation() }
     }
 
     private var brand: some View {
@@ -66,7 +76,13 @@ struct ContentView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    brand.frame(height: 44, alignment: .leading)
+                    HStack {
+                        Button { showsGoal = false } label: {
+                            Image(systemName: "chevron.left").frame(width: 44, height: 44)
+                        }.buttonStyle(.plain).accessibilityLabel("출발지 선택으로 돌아가기")
+                        Spacer()
+                        brand
+                    }.frame(height: 44)
                     Text("오늘은 어떻게\n달려볼까요?")
                         .font(.system(size: 28, weight: .bold)).lineSpacing(2).padding(.top, 4)
                     Color.clear.frame(height: 28)
@@ -90,10 +106,6 @@ struct ContentView: View {
                     if let message = planner.message {
                         Text(message).font(.footnote).foregroundStyle(GrunnYStyle.brand).padding(.top, 8)
                     }
-                    if !location.canStartRun {
-                        Text(location.message).font(.footnote).foregroundStyle(GrunnYStyle.secondary).padding(.top, 8)
-                        Button("위치 다시 확인", action: location.requestCurrentLocation).font(.footnote)
-                    }
 
                 }
                 .padding(.horizontal, 20).padding(.bottom, 12)
@@ -103,8 +115,8 @@ struct ContentView: View {
         .background(GrunnYStyle.background)
         .safeAreaInset(edge: .bottom) {
             Button(action: findCourse) { GrunnYPrimaryLabel(title: "코스 찾기", trailingAligned: true) }
-                .buttonStyle(.plain).disabled(!location.canStartRun)
-                .opacity(location.canStartRun ? 1 : 0.5)
+                .buttonStyle(.plain).disabled(selectedStart == nil)
+                .opacity(selectedStart == nil ? 0.5 : 1)
                 .padding(.horizontal, 20).padding(.vertical, 12).background(GrunnYStyle.background)
         }
     }
@@ -164,7 +176,8 @@ struct ContentView: View {
 
                 HStack(spacing: 20) {
                     metric(String(format: "%.1f km", planner.distance / 1000), "거리")
-                    metric("\(Int(ceil(planner.distance / 1000 * Double(pace) / 60))) min", "예상 시간")
+                    metric("\(Int(ceil((planner.distance / 1000 * Double(pace) + (planner.selectedSignalEstimate?.totalWait ?? 0)) / 60))) min",
+                           planner.selectedSignalEstimate?.totalWait == nil ? "예상 시간 · 대기 제외" : "예상 시간 · 대기 포함")
                 }
                 .padding(.top, 22)
 
@@ -178,7 +191,9 @@ struct ContentView: View {
                 HStack(alignment: .center, spacing: 12) {
                     Circle().fill(GrunnYStyle.teal).frame(width: 9, height: 9)
                         .accessibilityHidden(true)
-                    Text("보행 가능한 코스예요. 예상 시간에 신호 대기·경사도는 반영되지 않았어요.")
+                    Text(planner.recommendedSignalRouteID == planner.selectedLoop?.id && planner.recommendedSignalRouteID != nil
+                         ? "비교 가능한 후보 중 예상 신호 대기가 가장 적은 코스예요."
+                         : "신호 대기시간은 아직 확인되지 않았어요. 자료가 있는 후보끼리는 신호등 없는 횡단보도 근접을 줄여 선택해요.")
                         .font(.system(size: 14, weight: .medium))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -187,6 +202,17 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
                 .background(GrunnYStyle.mint, in: RoundedRectangle(cornerRadius: 12))
                 .padding(.top, 20)
+                Button { showsAnalysis = true } label: {
+                    HStack {
+                        Text(planner.selectedSignalEstimate?.totalWait.map { "예상 신호 대기 \(Int($0.rounded()))초 · 분석 보기" }
+                             ?? "신호 대기 미확인 · 데이터 확인")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.caption).foregroundStyle(GrunnYStyle.brand)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }.buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
@@ -194,10 +220,20 @@ struct ContentView: View {
         .background(GrunnYStyle.background)
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
-            Button { location.startRun() } label: {
-                GrunnYPrimaryLabel(title: "이 코스로 달리기", trailingAligned: true)
+            VStack(spacing: 8) {
+                if location.isDenied || location.isRestricted {
+                    Text("러닝 기록에는 위치 권한이 필요해요.").font(.caption).foregroundStyle(GrunnYStyle.secondary)
+                }
+                Button {
+                    if location.canStartRun { location.startRun() }
+                    else if location.isDenied {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                    } else { location.requestCurrentLocation() }
+                } label: {
+                    GrunnYPrimaryLabel(title: location.canStartRun ? "이 코스로 달리기" : "위치 권한 허용", trailingAligned: true)
+                }
+                .buttonStyle(.plain).disabled(location.isRestricted || location.isRunning || planner.displayedLegs.isEmpty)
             }
-            .buttonStyle(.plain).disabled(!location.canStartRun || planner.displayedLegs.isEmpty)
             .padding(.horizontal, 20).padding(.vertical, 12).background(GrunnYStyle.background)
         }
     }
@@ -211,9 +247,16 @@ struct ContentView: View {
     private func findCourse() {
         departure = departsNow ? nil : clockTime
         searchTask = Task { @MainActor in
-            await planner.findLoops(from: location.currentLocation, targetKM: targetKM, pace: pace, departure: departure)
+            await planner.findLoops(from: location.currentLocation, targetKM: targetKM, pace: pace,
+                                    departure: departure, selectedStart: selectedStart?.coordinate)
+            refreshSignalRecommendation()
             if !Task.isCancelled, !planner.displayedLegs.isEmpty { showsRoute = true }
         }
+    }
+
+    private func refreshSignalRecommendation() {
+        guard !location.isRunning else { return }
+        planner.applySignalAssessments(planner.signalAssessments(pace: pace, plans: plans, signalRows: signalRows))
     }
 }
 

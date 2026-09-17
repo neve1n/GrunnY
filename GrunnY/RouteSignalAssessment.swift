@@ -8,12 +8,12 @@ struct RouteSignalAssessment: Identifiable {
     let reasons: [String: String]
 
     static func make(id: UUID, distance: Double, matches: [CrosswalkMatch], pace: Int,
-                     departure: Date, plans: SeoulPlanCollection?) -> Self {
+                     departure: Date, plans: SeoulPlanCollection?, signalRows: [SeoulSignalRow] = []) -> Self {
         let reasons = Dictionary(uniqueKeysWithValues: matches.map { match in
-            (match.id, readinessReason(for: match, at: departure.addingTimeInterval(match.metersFromStart / 1000 * Double(pace)), plans: plans))
+            (match.id, readinessReason(for: match, at: departure.addingTimeInterval(match.metersFromStart / 1000 * Double(pace)), plans: plans, signalRows: signalRows))
         })
-        // Proximity matches are not confirmed crossings. No provider adapter currently
-        // supplies a verified walk-entry window and cycle epoch. Never synthesize either.
+        // Coordinates only propose a link. Neither a matching name nor a recent
+        // observation establishes route coverage or a future walk-entry window.
         let crossings = matches.map { match in
             SignalWaitEstimator.Crossing(id: match.id, metersFromStart: match.metersFromStart,
                                          timing: nil, unavailableReason: reasons[match.id])
@@ -23,7 +23,7 @@ struct RouteSignalAssessment: Identifiable {
                                                             crossings: crossings, coverageVerified: false), reasons: reasons)
     }
 
-    private static func readinessReason(for match: CrosswalkMatch, at arrival: Date, plans: SeoulPlanCollection?) -> String {
+    private static func readinessReason(for match: CrosswalkMatch, at arrival: Date, plans: SeoulPlanCollection?, signalRows: [SeoulSignalRow]) -> String {
         if match.crosswalk.signalPresence == "무" { return "보행등 미설치 자료 · 실제 횡단 여부 확인 필요" }
         guard let plans else { return "운영·요일·특수일·예약계획 미수집" }
         guard let basis = plans.basis else { return "교차로 기반정보 미수집" }

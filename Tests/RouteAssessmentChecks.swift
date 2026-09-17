@@ -15,6 +15,16 @@ import Foundation
         plans.basis = SeoulPhaseBasis(fetchedAt:Date(),intersections:[["REGION_CD":"L01","INT_NO":"2904","INT_NM":"시청"]],configurations:[["REGION_CD":"L01","INT_NO":"2904","MAP_NO":"0","A_RING_1_PHASE_CONF_CD":"S170350"]])
         precondition(assess([match],plans).reasons[match.id]!.contains("P 보행현시 없음"))
         precondition(assess([match],plans).estimate.totalWait == nil)
+        // A fresh all-green response is not a verified crossing or full route coverage.
+        // This regresses the liveTiming adapter that invented a repeating cycle and
+        // treated any collection of non-nil timings as verified coverage.
+        let now = Date()
+        let green = SeoulSignalRow(id:"fixture",intersectionID:"fixture",transmittedAt:String(now.timeIntervalSince1970 * 1000),
+            fields:[],pedestrianSignals:[.init(direction:.north,state:"protected-Movement-Allowed",remainingRaw:"10")])
+        let snapshotResult = RouteSignalAssessment.make(id:UUID(),distance:1000,matches:[match],pace:300,
+            departure:now,plans:plans,signalRows:[green])
+        precondition(snapshotResult.estimate.totalWait == nil && snapshotResult.estimate.finish == nil)
+        precondition(snapshotResult.estimate.stops.allSatisfy { $0.arrival == nil && $0.wait == nil })
         print("Missing plan, missing basis, no pedestrian phase and empty coverage remain unknown")
     }
 }

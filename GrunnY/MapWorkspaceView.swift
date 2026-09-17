@@ -189,11 +189,11 @@ struct MapWorkspaceView: View {
                 runSettingsForm
             }
             .sheet(isPresented: $showsSignalComparison) {
-                RouteComparisonView(assessments: routePlanner.signalAssessments(pace: paceSecondsPerKM, plans: signalPlans),
+                RouteComparisonView(assessments: routePlanner.signalAssessments(pace: paceSecondsPerKM, plans: signalPlans, signalRows: signalRows),
                                     pace: paceSecondsPerKM, departure: routePlanner.calculatedDeparture ?? .now,
                                     selectedIndex: routePlanner.selectedIndex, canSelect: !location.isRunning,
                                     target: targetDistanceKM * 1000,
-                                    select: { routePlanner.selectCandidate($0); showEntireRoute() }, plans: $signalPlans)
+                                    select: { routePlanner.selectCandidate($0); showEntireRoute() }, plans: $signalPlans, signalRows: $signalRows)
             }
             .sheet(isPresented: $showsCrosswalks) {
                 CrosswalkListView(matches: routePlanner.crosswalkMatches,
