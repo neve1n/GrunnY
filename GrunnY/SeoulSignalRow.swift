@@ -118,7 +118,7 @@ extension SeoulSignalRow {
               milliseconds >= 946684800000, milliseconds < 4102444800000 else { return nil }
         return Date(timeIntervalSince1970: milliseconds / 1000)
     }
-
+    
     func freshnessText(at now: Date) -> String {
         guard let observedAt else { return "원본 시각을 해석할 수 없습니다." }
         let age = now.timeIntervalSince(observedAt)
@@ -127,3 +127,4 @@ extension SeoulSignalRow {
         return "최근 30초 이내 관측값 · 자동 갱신 아님"
     }
 }
+
